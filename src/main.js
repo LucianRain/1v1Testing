@@ -58,6 +58,8 @@ let botHand = [];
 let pendingPlay = null; // { cardId, handIdx } while picking a target on the field
 let myPendingCar = null; // optimistic preview of a wagon/armor I just committed
 let oppPendingCar = null; // same, for the opponent's just-revealed play
+let myLastTrainWidth = null;
+let oppLastTrainWidth = null;
 let revealTimeout = null;
 let bannerTimeout = null;
 
@@ -116,6 +118,8 @@ function startMatch(seed) {
   oppPlay = null;
   myPendingCar = null;
   oppPendingCar = null;
+  myLastTrainWidth = null;
+  oppLastTrainWidth = null;
   resolving = false;
   gameOver = false;
   render();
@@ -155,16 +159,36 @@ function renderTrains() {
   renderTrain(myTrainEl, myCars, myValidIds);
   renderTrain(oppTrainEl, oppCars, oppValidIds);
 
-  positionTrain(myTrainEl, myTrackEl, matchState[myRole].hp);
-  positionTrain(oppTrainEl, oppTrackEl, matchState[oppRole].hp);
+  myLastTrainWidth = positionTrain(myTrainEl, myTrackEl, matchState[myRole].hp, myLastTrainWidth);
+  oppLastTrainWidth = positionTrain(oppTrainEl, oppTrackEl, matchState[oppRole].hp, oppLastTrainWidth);
 }
 
 // Full HP: engine (rightmost) touches the track's right edge.
 // Near dead: the last car (leftmost) touches the track's left edge.
-function positionTrain(trainEl, trackEl, hp) {
+//
+// A car coupling/uncoupling changes the train's width, which also changes
+// where "left" needs to be to keep it anchored - but that's a size
+// correction, not a move, so it should snap instantly rather than sliding
+// through the animated `left` transition (which otherwise briefly overshoots
+// past the track edge before settling). Only animate when HP itself is what
+// changed the position.
+function positionTrain(trainEl, trackEl, hp, lastWidth) {
   const frac = Math.max(0, Math.min(1, hp / MAX_HP));
-  const room = trackEl.offsetWidth - trainEl.offsetWidth;
-  trainEl.style.left = `${Math.max(0, room) * frac}px`;
+  const trainWidth = trainEl.offsetWidth;
+  const room = trackEl.offsetWidth - trainWidth;
+  const left = Math.max(0, room) * frac;
+
+  if (lastWidth !== null && lastWidth !== trainWidth) {
+    const prevTransition = trainEl.style.transition;
+    trainEl.style.transition = 'none';
+    trainEl.style.left = `${left}px`;
+    void trainEl.offsetHeight; // flush so the no-transition position applies before restoring
+    trainEl.style.transition = prevTransition;
+  } else {
+    trainEl.style.left = `${left}px`;
+  }
+
+  return trainWidth;
 }
 
 function renderTrain(el, cars, validIds) {
