@@ -777,14 +777,16 @@ async function runResolution() {
   oppPendingCar = null;
   oppPendingInsertIndex = null;
 
+  // Don't reveal or animate anything from this round until the opponent's
+  // "played X" popup has actually finished and cleared off screen.
+  await revealDonePromise;
+
   if (setup.wrecks.length) {
     await playWreckAnimations(setup.wrecks);
   } else {
     render();
   }
-  // Setup itself shows immediately - but don't start the trigger phase while
-  // the opponent's "played X" popup is still up on screen.
-  await Promise.all([wait(STAGE_MS), revealDonePromise]);
+  await wait(STAGE_MS);
 
   inTriggerPhase = true;
   const heal = resolveHeal(matchState, plays);
