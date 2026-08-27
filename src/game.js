@@ -192,72 +192,83 @@ export function resolveSetup(state, plays) {
   return log;
 }
 
-// Every coupled, non-disabled Repair Car heals its healPerRound each round -
-// same trigger pattern as Artillery Wagon's damage, just healing instead.
+// Which player's train triggers first alternates every round, so neither
+// side has a standing advantage in the trigger phase.
+function triggerOrder(state) {
+  return state.round % 2 === 1 ? ['host', 'client'] : ['client', 'host'];
+}
+
+// Cars trigger in position order along the train, engine end first - new
+// cars couple on next to the engine, so this is newest-first, working back
+// toward the rear.
+function inTriggerOrder(cars) {
+  return cars.slice().reverse();
+}
+
+// Every coupled, non-disabled Repair Car heals its healPerRound, one car at
+// a time in position order; whole trains go in the round's trigger order.
 export function resolveHeal(state, plays) {
   const log = [];
-  for (const s of SIDES) {
-    let healAmount = 0;
-    for (const car of state[s].cars) {
-      if (car.type === 'repair' && !car.disabledThisRound) healAmount += car.healPerRound;
-    }
-    if (healAmount > 0) {
+  for (const s of triggerOrder(state)) {
+    for (const car of inTriggerOrder(state[s].cars)) {
+      if (car.type !== 'repair' || car.disabledThisRound || car.healPerRound <= 0) continue;
       const before = state[s].hp;
-      state[s].hp = Math.min(MAX_HP, state[s].hp + healAmount);
+      state[s].hp = Math.min(MAX_HP, state[s].hp + car.healPerRound);
       const healed = state[s].hp - before;
-      if (healed > 0) log.push(`${s} heals ${healed} HP`);
+      if (healed > 0) log.push(`${s}'s repair car heals ${healed} HP`);
     }
   }
   return log;
 }
 
+// A single hit against a target: an available armor car absorbs it (one
+// charge, falls off once spent), otherwise it lands as real damage.
+function applyHit(state, targetSide, amount, log, sourceLabel) {
+  if (amount <= 0) return;
+  const armorCar = state[targetSide].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && !c.disabledThisRound);
+  if (armorCar) {
+    armorCar.blockCharges--;
+    log.push(`${targetSide}'s armor car blocks ${sourceLabel}`);
+    if (armorCar.blockCharges <= 0) removeCar(state[targetSide].cars, armorCar.id);
+    return;
+  }
+  state[targetSide].hp -= amount;
+  log.push(`${targetSide} takes ${amount} damage from ${sourceLabel}`);
+}
+
+// Whole trains fire in the round's trigger order; within a train, any
+// leftover Track Break DoT resolves first, then coupled wagons in position
+// order, then a freshly-played Track Break. Each hit checks the target's
+// armor individually, in that same sequence - overrides the old
+// blocks-the-biggest-hit priority logic.
 export function resolveDamage(state, plays) {
   const log = [];
 
-  for (const t of SIDES) {
-    const attacker = otherSide(t);
+  for (const attacker of triggerOrder(state)) {
+    const target = otherSide(attacker);
     const attackerPlay = plays[attacker];
-    const hits = [];
 
-    if (state[t].pendingDot > 0) {
-      hits.push(state[t].pendingDot);
-      state[t].pendingDot = 0;
-    }
-    for (const car of state[attacker].cars) {
-      if (car.type === 'wagon' && !car.disabledThisRound) hits.push(car.dmgPerRound);
-    }
-    let newPendingDot = 0;
-    if (attackerPlay.card === 'track_break') {
-      hits.push(2);
-      newPendingDot = 1;
+    if (state[target].pendingDot > 0) {
+      applyHit(state, target, state[target].pendingDot, log, `${attacker}'s lingering track break`);
+      state[target].pendingDot = 0;
     }
 
-    const armorCar = state[t].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && !c.disabledThisRound);
-    if (armorCar && hits.length) {
-      hits.sort((a, b) => b - a);
-      let canceled = 0;
-      while (armorCar.blockCharges > 0 && canceled < hits.length) {
-        hits[canceled] = 0;
-        armorCar.blockCharges--;
-        canceled++;
+    for (const car of inTriggerOrder(state[attacker].cars)) {
+      if (car.type === 'wagon' && !car.disabledThisRound) {
+        applyHit(state, target, car.dmgPerRound, log, `${attacker}'s artillery wagon`);
       }
-      if (armorCar.blockCharges <= 0) removeCar(state[t].cars, armorCar.id);
     }
 
-    const total = hits.reduce((a, b) => a + b, 0);
-    if (total > 0) {
-      state[t].hp -= total;
-      log.push(`${t} takes ${total} damage`);
+    if (attackerPlay.card === 'track_break') {
+      applyHit(state, target, 2, log, `${attacker}'s track break`);
+      state[target].pendingDot += 1;
     }
-    state[t].pendingDot += newPendingDot;
   }
 
   // Sudden death: escalating chip damage once round 9+ is reached
   if (state.round >= SUDDEN_DEATH_START_ROUND) {
     const chip = state.round - (SUDDEN_DEATH_START_ROUND - 1);
-    state.host.hp -= chip;
-    state.client.hp -= chip;
-    log.push(`Sudden death: both trains take ${chip} damage`);
+    for (const s of triggerOrder(state)) applyHit(state, s, chip, log, 'sudden death');
   }
 
   state.round += 1;
