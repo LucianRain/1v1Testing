@@ -1,0 +1,109 @@
+// Thin wrapper around PeerJS for a single 1:1 P2P connection.
+// PeerJS's free public cloud broker is only used for signaling (finding the
+// other peer) - once connected, game data flows directly browser-to-browser
+// over WebRTC, so this works fine from a static GitHub Pages site.
+
+export class PeerNetwork extends EventTarget {
+  constructor() {
+    super();
+    this.peer = null;
+    this.conn = null;
+    this.role = null; // 'host' | 'client'
+  }
+
+  host() {
+    this.role = 'host';
+    return new Promise((resolve, reject) => {
+      this.peer = new Peer(shortId());
+
+      this.peer.on('open', (id) => resolve(id));
+
+      this.peer.on('connection', (conn) => {
+        this._bindConnection(conn);
+      });
+
+      this.peer.on('error', (err) => {
+        reject(err);
+        this.dispatchEvent(new CustomEvent('error', { detail: err }));
+      });
+    });
+  }
+
+  join(hostId) {
+    this.role = 'client';
+    return new Promise((resolve, reject) => {
+      this.peer = new Peer();
+
+      this.peer.on('open', () => {
+        const conn = this.peer.connect(hostId, { reliable: false });
+        let settled = false;
+
+        conn.on('open', () => {
+          settled = true;
+          this._bindConnection(conn);
+          resolve();
+        });
+
+        conn.on('error', (err) => {
+          if (!settled) reject(err);
+        });
+
+        setTimeout(() => {
+          if (!settled) reject(new Error('Connection timed out. Check the room code.'));
+        }, 12000);
+      });
+
+      this.peer.on('error', (err) => {
+        reject(err);
+      });
+    });
+  }
+
+  _bindConnection(conn) {
+    this.conn = conn;
+
+    conn.on('data', (data) => {
+      this.dispatchEvent(new CustomEvent('data', { detail: data }));
+    });
+
+    conn.on('close', () => {
+      this.dispatchEvent(new CustomEvent('close'));
+    });
+
+    conn.on('error', (err) => {
+      this.dispatchEvent(new CustomEvent('error', { detail: err }));
+    });
+
+    this.dispatchEvent(new CustomEvent('connected'));
+  }
+
+  send(msg) {
+    if (this.conn && this.conn.open) {
+      this.conn.send(msg);
+    }
+  }
+
+  destroy() {
+    if (this.conn) this.conn.close();
+    if (this.peer) this.peer.destroy();
+  }
+}
+
+function shortId() {
+  // Human-friendly 6-character room code instead of PeerJS's default UUID.
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 6; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return `duel-${out}`;
+}
+
+export function formatRoomCode(peerId) {
+  return peerId.replace('duel-', '');
+}
+
+export function toPeerId(roomCode) {
+  const trimmed = roomCode.trim().toUpperCase();
+  return trimmed.startsWith('DUEL-') ? `duel-${trimmed.slice(5)}` : `duel-${trimmed}`;
+}
