@@ -18,9 +18,11 @@ const roundInfoEl = document.getElementById('round-info');
 const myHpEl = document.getElementById('my-hp');
 const myHpFillEl = document.getElementById('my-hp-fill');
 const myTrainEl = document.getElementById('my-train');
+const myTrackEl = document.getElementById('my-track');
 const oppHpEl = document.getElementById('opp-hp');
 const oppHpFillEl = document.getElementById('opp-hp-fill');
 const oppTrainEl = document.getElementById('opp-train');
+const oppTrackEl = document.getElementById('opp-track');
 const handEl = document.getElementById('hand');
 const btnPass = document.getElementById('btn-pass');
 const targetAreaEl = document.getElementById('target-area');
@@ -133,6 +135,17 @@ function renderTrains() {
 
   renderTrain(myTrainEl, myCars, myValidIds);
   renderTrain(oppTrainEl, matchState[oppRole].cars, oppValidIds);
+
+  positionTrain(myTrainEl, myTrackEl, matchState[myRole].hp);
+  positionTrain(oppTrainEl, oppTrackEl, matchState[oppRole].hp);
+}
+
+// Full HP: engine (rightmost) touches the track's right edge.
+// Near dead: the last car (leftmost) touches the track's left edge.
+function positionTrain(trainEl, trackEl, hp) {
+  const frac = Math.max(0, Math.min(1, hp / MAX_HP));
+  const room = trackEl.offsetWidth - trainEl.offsetWidth;
+  trainEl.style.left = `${Math.max(0, room) * frac}px`;
 }
 
 function renderTrain(el, cars, validIds) {
