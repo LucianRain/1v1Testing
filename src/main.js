@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, createDeck, draw, redrawHand, deriveSeed, createMatchState, resolveRound, validTargets, checkWinner } from './game.js';
+import { CARDS, MAX_HP, createDeck, draw, redrawHand, deriveSeed, createMatchState, resolveRound, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -16,8 +16,10 @@ const joinStatusEl = document.getElementById('join-status');
 
 const roundInfoEl = document.getElementById('round-info');
 const myHpEl = document.getElementById('my-hp');
+const myHpFillEl = document.getElementById('my-hp-fill');
 const myTrainEl = document.getElementById('my-train');
 const oppHpEl = document.getElementById('opp-hp');
+const oppHpFillEl = document.getElementById('opp-hp-fill');
 const oppTrainEl = document.getElementById('opp-train');
 const handEl = document.getElementById('hand');
 const btnPass = document.getElementById('btn-pass');
@@ -98,11 +100,18 @@ function startMatch(seed) {
 
 function render() {
   roundInfoEl.textContent = `Round ${matchState.round}`;
-  myHpEl.textContent = matchState[myRole].hp;
-  oppHpEl.textContent = matchState[oppRole].hp;
+  renderHp(myHpEl, myHpFillEl, matchState[myRole].hp);
+  renderHp(oppHpEl, oppHpFillEl, matchState[oppRole].hp);
   renderTrain(myTrainEl, matchState[myRole].cars);
   renderTrain(oppTrainEl, matchState[oppRole].cars);
   renderHand();
+}
+
+function renderHp(labelEl, fillEl, hp) {
+  labelEl.textContent = hp;
+  const pct = Math.max(0, Math.min(1, hp / MAX_HP)) * 100;
+  fillEl.style.width = `${pct}%`;
+  fillEl.classList.toggle('low', hp <= MAX_HP * 0.3);
 }
 
 function renderTrain(el, cars) {
