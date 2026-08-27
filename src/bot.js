@@ -61,7 +61,12 @@ function scorePlay(state, side, cardId) {
     }
     case 'refresh': {
       const incoming = state[opp].cars.filter((c) => c.type === 'wagon').reduce((a, c) => a + c.dmgPerRound, 0);
-      return { score: 2 + incoming * 1.2, target: targets[0] };
+      const target = targets[0];
+      const car = state[side].cars.find((c) => c.id === target);
+      // Reviving a Wrecking Car also needs a fresh enemy target to fire at.
+      const refreshTarget =
+        car && car.type === 'claw' ? bestTarget(state[opp].cars, validTargets(state, side, 'claw')) : null;
+      return { score: 2 + incoming * 1.2, target, refreshTarget };
     }
     default:
       return { score: -Infinity, target: null };
@@ -72,10 +77,10 @@ export function chooseBotPlay(state, side, hand) {
   let best = null;
   let bestScore = -Infinity;
   for (const cardId of hand) {
-    const { score, target } = scorePlay(state, side, cardId);
+    const { score, target, refreshTarget } = scorePlay(state, side, cardId);
     if (score > bestScore) {
       bestScore = score;
-      best = { card: cardId, target };
+      best = { card: cardId, target, refreshTarget };
     }
   }
   return best || { card: hand[0], target: null };

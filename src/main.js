@@ -66,6 +66,7 @@ let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
 let targetDragState = null; // in-progress arc-targeting drag (Sabotage, or aiming a placed Wrecking Car)
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
+let refreshAimState = null; // { handIdx, carId } while reviving a spent Wrecking Car needs a fresh aim
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
 let inTriggerPhase = false;
@@ -113,7 +114,7 @@ net.addEventListener('data', (e) => {
   if (msg.t === 'init') {
     startMatch(msg.seed);
   } else if (msg.t === 'play') {
-    handleOppPlayKnown(msg.card, msg.target, msg.insertIndex);
+    handleOppPlayKnown(msg.card, msg.target, msg.insertIndex, msg.refreshTarget);
   }
 });
 
@@ -137,6 +138,7 @@ function startMatch(seed) {
   oppPendingCar = null;
   oppPendingInsertIndex = null;
   awaitingAim = null;
+  refreshAimState = null;
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
   inTriggerPhase = false;
@@ -226,21 +228,26 @@ function renderTrain(el, cars, validIds) {
     const box = document.createElement('div');
     const pulse = car.id != null && pulsingIds.has(car.id);
     const spent = (car.type === 'armor' && car.blockCharges <= 0) || (car.type === 'claw' && car.fired);
+    const awaitingPlacementAim = car.pending && car.needsAim;
+    const awaitingRefreshAim = refreshAimState && car.id === refreshAimState.carId;
     box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}${spent ? ' spent' : ''}`;
     if (car.id != null) box.dataset.carId = car.id;
     let stat;
     if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
     else if (car.type === 'armor') stat = spent ? 'spent' : `${car.blockCharges}x block`;
-    else if (car.type === 'claw') stat = car.needsAim ? 'aim me' : spent ? 'spent' : 'armed';
+    else if (car.type === 'claw') stat = awaitingPlacementAim || awaitingRefreshAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
     if (validIds && car.id != null && validIds.has(car.id)) {
       box.classList.add('targetable');
       box.addEventListener('click', () => chooseTarget(car.id));
     }
-    if (car.pending && car.needsAim) {
+    if (awaitingPlacementAim) {
       box.classList.add('needs-aim');
       box.addEventListener('pointerdown', (e) => startClawAim(e, box));
+    } else if (awaitingRefreshAim) {
+      box.classList.add('needs-aim');
+      box.addEventListener('pointerdown', (e) => startRefreshAimDrag(e, box));
     }
     el.appendChild(box);
   });
@@ -483,6 +490,34 @@ function startClawAim(e, boxEl) {
   });
 }
 
+// Refresh was played targeting a spent Wrecking Car (see chooseTarget): it
+// needs a brand new aim, same drag-out reticle as placing one fresh, before
+// it can actually fire again. Switches the field's highlighting over to
+// enemy cars (reusing Claw's own targeting rules) and marks the revived car
+// as the thing to drag from.
+function startRefreshAim(handIdx, carId) {
+  targetAreaEl.classList.add('hidden');
+  refreshAimState = { handIdx, carId };
+  pendingPlay = { cardId: 'claw', handIdx }; // borrow claw's enemy_car targeting for the highlight
+  renderTrains();
+  renderHand();
+}
+
+function startRefreshAimDrag(e, boxEl) {
+  if (!refreshAimState || dragState || targetDragState) return;
+  const { handIdx, carId } = refreshAimState;
+  startArcTargeting(e, boxEl, (targetId) => {
+    if (targetId != null) {
+      refreshAimState = null;
+      pendingPlay = null;
+      commitPlay('refresh', handIdx, carId, null, targetId);
+    } else {
+      renderTrains();
+      renderHand();
+    }
+  });
+}
+
 function beginTargeting(cardId, handIdx) {
   pendingPlay = { cardId, handIdx };
   targetAreaEl.classList.remove('hidden');
@@ -493,6 +528,18 @@ function beginTargeting(cardId, handIdx) {
 function chooseTarget(targetId) {
   if (!pendingPlay) return;
   const { cardId, handIdx } = pendingPlay;
+
+  if (cardId === 'refresh') {
+    const car = matchState[myRole].cars.find((c) => c.id === targetId);
+    if (car && car.type === 'claw') {
+      // Reviving a Wrecking Car needs a fresh aim before it can fire again -
+      // don't commit yet, switch into the same arc-reticle flow used to aim
+      // a freshly-placed one.
+      startRefreshAim(handIdx, targetId);
+      return;
+    }
+  }
+
   pendingPlay = null;
   commitPlay(cardId, handIdx, targetId);
 }
@@ -520,13 +567,15 @@ btnPass.addEventListener('click', () => {
 function playBotTurn() {
   const botChoice = chooseBotPlay(matchState, oppRole, botHand);
   botHand.splice(botHand.indexOf(botChoice.card), 1);
-  handleOppPlayKnown(botChoice.card, botChoice.target, null); // bot always appends at the engine end
+  // bot always appends at the engine end; refreshTarget only matters when reviving a Wrecking Car
+  handleOppPlayKnown(botChoice.card, botChoice.target, null, botChoice.refreshTarget);
 }
 
-function commitPlay(cardId, handIdx, target, insertIndex) {
+function commitPlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   myHand.splice(handIdx, 1);
   insertIndex = insertIndex ?? null;
-  myPlay = { card: cardId, target, insertIndex };
+  refreshTarget = refreshTarget ?? null;
+  myPlay = { card: cardId, target, insertIndex, refreshTarget };
   myPendingCar = pendingCarFor(cardId);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
@@ -535,7 +584,7 @@ function commitPlay(cardId, handIdx, target, insertIndex) {
   if (vsBot) {
     setTimeout(playBotTurn, BOT_DELAY_MS);
   } else {
-    net.send({ t: 'play', card: cardId, target, insertIndex });
+    net.send({ t: 'play', card: cardId, target, insertIndex, refreshTarget });
     runResolution();
   }
 }
@@ -543,9 +592,10 @@ function commitPlay(cardId, handIdx, target, insertIndex) {
 // Opponent's play is known (bot decided, or a networked message arrived):
 // show their new car instantly and reveal what they played, same as our own
 // turn, before the actual resolution animation runs.
-function handleOppPlayKnown(cardId, target, insertIndex) {
+function handleOppPlayKnown(cardId, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
-  oppPlay = { card: cardId, target, insertIndex };
+  refreshTarget = refreshTarget ?? null;
+  oppPlay = { card: cardId, target, insertIndex, refreshTarget };
   oppPendingCar = pendingCarFor(cardId);
   oppPendingInsertIndex = insertIndex;
   render();

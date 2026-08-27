@@ -121,10 +121,12 @@ function insertCar(cars, car, index) {
   cars.splice(i, 0, car);
 }
 
-// A car that's used up whatever made it useful but is still coupled - right
-// now that's only an Armor Car with no charges left.
+// A car that's used up whatever made it useful but is still coupled: an
+// Armor Car with no charges left, or a Wrecking Car that's already fired.
 export function isSpent(car) {
-  return car.type === 'armor' && car.blockCharges <= 0;
+  if (car.type === 'armor') return car.blockCharges <= 0;
+  if (car.type === 'claw') return car.fired;
+  return false;
 }
 
 export function validTargets(state, side, cardId) {
@@ -182,8 +184,21 @@ export function resolveSetup(state, plays) {
     } else if (play.card === 'refresh') {
       const car = findCar(state[s].cars, play.target);
       if (car && isSpent(car)) {
-        car.blockCharges = 1;
-        log.push(`${s} refreshes their ${car.type}`);
+        if (car.type === 'armor') {
+          car.blockCharges = 1;
+          log.push(`${s} refreshes their armor car`);
+        } else if (car.type === 'claw') {
+          // Reviving a Wrecking Car re-aims and fires it immediately, same
+          // as when it was first placed - it goes right back to spent.
+          const enemyCar = findCar(state[opp].cars, play.refreshTarget);
+          if (enemyCar && !enemyCar.protected) {
+            removeCar(state[opp].cars, enemyCar.id);
+            log.push(`${s} refreshes their wrecking car, which destroys ${opp}'s ${enemyCar.type}`);
+          } else {
+            log.push(`${s} refreshes their wrecking car`);
+          }
+          car.fired = true;
+        }
       }
     }
   }
