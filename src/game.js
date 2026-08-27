@@ -113,6 +113,14 @@ function removeCar(cars, id) {
   if (i !== -1) cars.splice(i, 1);
 }
 
+// Inserts a newly-coupled car at a chosen position in the train (the player
+// dragged it there); index is clamped to a valid range and defaults to the
+// engine end (append) when not given.
+function insertCar(cars, car, index) {
+  const i = index == null ? cars.length : Math.max(0, Math.min(index, cars.length));
+  cars.splice(i, 0, car);
+}
+
 export function validTargets(state, side, cardId) {
   const card = CARDS[cardId];
   if (card.target === 'enemy_car') {
@@ -171,22 +179,23 @@ export function resolveSetup(state, plays) {
     }
   }
 
-  // new cars couple on (confirms whatever the UI already previewed)
+  // new cars couple on (confirms whatever the UI already previewed) - at
+  // whatever position in the train the player chose, defaulting to the
+  // engine end (append) if they didn't specify one.
   for (const s of SIDES) {
     const play = plays[s];
+    let car = null;
     if (play.card === 'armor') {
-      state.carCounter++;
-      state[s].cars.push({ id: state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false });
+      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {
-      state.carCounter++;
-      state[s].cars.push({ id: state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false });
+      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false };
       log.push(`${s} couples an Artillery Wagon`);
     } else if (play.card === 'repair') {
-      state.carCounter++;
-      state[s].cars.push({ id: state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false });
+      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false };
       log.push(`${s} couples a Repair Car`);
     }
+    if (car) insertCar(state[s].cars, car, play.insertIndex);
   }
 
   return log;

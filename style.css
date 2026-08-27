@@ -346,6 +346,49 @@ input:focus {
   white-space: normal;
 }
 
+.card-btn.draggable {
+  touch-action: none;
+  cursor: grab;
+}
+
+.card-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 150px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #4aa8ff, #6a5cff);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  transform: translate(-50%, -120%);
+  pointer-events: none;
+  z-index: 30;
+  opacity: 0.92;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.card-ghost strong { font-size: 14px; }
+.card-ghost span { opacity: 0.85; }
+
+.insert-indicator {
+  position: fixed;
+  width: 3px;
+  border-radius: 2px;
+  background: #ffd15c;
+  box-shadow: 0 0 8px 2px rgba(255, 209, 92, 0.7);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 22;
+}
+
+.insert-indicator.visible {
+  opacity: 1;
+}
+
 .card-btn strong { font-size: 14px; }
 .card-btn span { opacity: 0.8; font-weight: 400; }
 

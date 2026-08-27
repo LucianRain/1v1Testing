@@ -60,7 +60,10 @@ let botDeck = null;
 let botHand = [];
 let pendingPlay = null; // { cardId, handIdx } while picking a target on the field
 let myPendingCar = null; // optimistic preview of a wagon/armor I just committed
+let myPendingInsertIndex = null; // where in my train that preview goes
 let oppPendingCar = null; // same, for the opponent's just-revealed play
+let oppPendingInsertIndex = null;
+let dragState = null; // in-progress drag of a train-car hand card
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
 let inTriggerPhase = false;
@@ -73,6 +76,11 @@ function pendingCarFor(cardId) {
   if (cardId === 'armor') return { type: 'armor', blockCharges: 1, pending: true };
   if (cardId === 'repair') return { type: 'repair', healPerRound: 1, pending: true };
   return null;
+}
+
+function insertAt(cars, car, index) {
+  const i = index == null ? cars.length : Math.max(0, Math.min(index, cars.length));
+  cars.splice(i, 0, car);
 }
 
 btnBot.addEventListener('click', () => {
@@ -102,7 +110,7 @@ net.addEventListener('data', (e) => {
   if (msg.t === 'init') {
     startMatch(msg.seed);
   } else if (msg.t === 'play') {
-    handleOppPlayKnown(msg.card, msg.target);
+    handleOppPlayKnown(msg.card, msg.target, msg.insertIndex);
   }
 });
 
@@ -122,7 +130,9 @@ function startMatch(seed) {
   myPlay = null;
   oppPlay = null;
   myPendingCar = null;
+  myPendingInsertIndex = null;
   oppPendingCar = null;
+  oppPendingInsertIndex = null;
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
   inTriggerPhase = false;
@@ -163,9 +173,9 @@ function renderTrains(hpOverride) {
   }
 
   const myCars = matchState[myRole].cars.slice();
-  if (myPendingCar) myCars.push(myPendingCar);
+  if (myPendingCar) insertAt(myCars, myPendingCar, myPendingInsertIndex);
   const oppCars = matchState[oppRole].cars.slice();
-  if (oppPendingCar) oppCars.push(oppPendingCar);
+  if (oppPendingCar) insertAt(oppCars, oppPendingCar, oppPendingInsertIndex);
 
   renderTrain(myTrainEl, myCars, myValidIds);
   renderTrain(oppTrainEl, oppCars, oppValidIds);
@@ -248,15 +258,103 @@ function renderHand() {
     const disabled = locked || (needsTarget && targets.length === 0);
     btn.disabled = disabled;
     btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
-    btn.addEventListener('click', () => {
-      if (needsTarget) {
-        beginTargeting(cardId, idx);
-      } else {
-        commitPlay(cardId, idx, null);
-      }
-    });
+    if (card.persistent) {
+      // Train cars (wagon/armor/repair): drag onto your train to choose
+      // where in the order it couples on, instead of a plain click.
+      btn.classList.add('draggable');
+      btn.addEventListener('pointerdown', (e) => startCardDrag(e, cardId, idx, btn));
+    } else {
+      btn.addEventListener('click', () => {
+        if (needsTarget) {
+          beginTargeting(cardId, idx);
+        } else {
+          commitPlay(cardId, idx, null);
+        }
+      });
+    }
     handEl.appendChild(btn);
   });
+}
+
+// Dragging a train-car hand card: a ghost follows the pointer, and an
+// insertion-line indicator snaps to the nearest gap between your existing
+// cars (or before the first / right before the engine) as you drag over
+// your own train. Dropping off the train cancels the play entirely.
+function startCardDrag(e, cardId, handIdx, sourceBtn) {
+  if (sourceBtn.disabled || dragState) return;
+  e.preventDefault();
+  const card = CARDS[cardId];
+
+  const ghost = document.createElement('div');
+  ghost.className = 'card-ghost';
+  ghost.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
+  document.body.appendChild(ghost);
+
+  const indicator = document.createElement('div');
+  indicator.className = 'insert-indicator';
+  document.body.appendChild(indicator);
+
+  dragState = { cardId, handIdx, ghost, indicator, insertIndex: null, overTrain: false, sourceBtn };
+  moveGhost(e.clientX, e.clientY);
+  updateDropTarget(e.clientX, e.clientY);
+
+  sourceBtn.setPointerCapture(e.pointerId);
+  sourceBtn.addEventListener('pointermove', onCardDragMove);
+  sourceBtn.addEventListener('pointerup', onCardDragEnd);
+  sourceBtn.addEventListener('pointercancel', onCardDragEnd);
+}
+
+function moveGhost(x, y) {
+  dragState.ghost.style.left = `${x}px`;
+  dragState.ghost.style.top = `${y}px`;
+}
+
+function onCardDragMove(e) {
+  if (!dragState) return;
+  moveGhost(e.clientX, e.clientY);
+  updateDropTarget(e.clientX, e.clientY);
+}
+
+function updateDropTarget(x, y) {
+  const trackRect = myTrackEl.getBoundingClientRect();
+  const overTrain = x >= trackRect.left && x <= trackRect.right && y >= trackRect.top && y <= trackRect.bottom;
+  dragState.overTrain = overTrain;
+  dragState.indicator.classList.toggle('visible', overTrain);
+  if (!overTrain) return;
+
+  const carBoxes = Array.from(myTrainEl.querySelectorAll('.car-box:not(.engine)'));
+  let index = carBoxes.length;
+  let indicatorX = null;
+  for (let i = 0; i < carBoxes.length; i++) {
+    const rect = carBoxes[i].getBoundingClientRect();
+    if (x < rect.left + rect.width / 2) {
+      index = i;
+      indicatorX = rect.left;
+      break;
+    }
+  }
+  if (indicatorX === null) {
+    const engine = myTrainEl.querySelector('.car-box.engine');
+    indicatorX = engine ? engine.getBoundingClientRect().left : trackRect.right;
+  }
+  dragState.insertIndex = index;
+  dragState.indicator.style.left = `${indicatorX}px`;
+  dragState.indicator.style.top = `${trackRect.top}px`;
+  dragState.indicator.style.height = `${trackRect.height}px`;
+}
+
+function onCardDragEnd(e) {
+  if (!dragState) return;
+  const { cardId, handIdx, overTrain, insertIndex, ghost, indicator, sourceBtn } = dragState;
+  ghost.remove();
+  indicator.remove();
+  sourceBtn.removeEventListener('pointermove', onCardDragMove);
+  sourceBtn.removeEventListener('pointerup', onCardDragEnd);
+  sourceBtn.removeEventListener('pointercancel', onCardDragEnd);
+  dragState = null;
+
+  if (overTrain) commitPlay(cardId, handIdx, null, insertIndex);
+  // else: dropped off the train, cancel - the card just stays in hand
 }
 
 function beginTargeting(cardId, handIdx) {
@@ -296,20 +394,22 @@ btnPass.addEventListener('click', () => {
 function playBotTurn() {
   const botChoice = chooseBotPlay(matchState, oppRole, botHand);
   botHand.splice(botHand.indexOf(botChoice.card), 1);
-  handleOppPlayKnown(botChoice.card, botChoice.target);
+  handleOppPlayKnown(botChoice.card, botChoice.target, null); // bot always appends at the engine end
 }
 
-function commitPlay(cardId, handIdx, target) {
+function commitPlay(cardId, handIdx, target, insertIndex) {
   myHand.splice(handIdx, 1);
-  myPlay = { card: cardId, target };
+  insertIndex = insertIndex ?? null;
+  myPlay = { card: cardId, target, insertIndex };
   myPendingCar = pendingCarFor(cardId);
+  myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
   renderTrains();
   renderHand();
   if (vsBot) {
     setTimeout(playBotTurn, BOT_DELAY_MS);
   } else {
-    net.send({ t: 'play', card: cardId, target });
+    net.send({ t: 'play', card: cardId, target, insertIndex });
     runResolution();
   }
 }
@@ -317,9 +417,11 @@ function commitPlay(cardId, handIdx, target) {
 // Opponent's play is known (bot decided, or a networked message arrived):
 // show their new car instantly and reveal what they played, same as our own
 // turn, before the actual resolution animation runs.
-function handleOppPlayKnown(cardId, target) {
-  oppPlay = { card: cardId, target };
+function handleOppPlayKnown(cardId, target, insertIndex) {
+  insertIndex = insertIndex ?? null;
+  oppPlay = { card: cardId, target, insertIndex };
   oppPendingCar = pendingCarFor(cardId);
+  oppPendingInsertIndex = insertIndex;
   render();
   if (cardId) {
     showCardReveal(cardId);
@@ -349,7 +451,9 @@ function runResolution() {
 
   resolveSetup(matchState, plays);
   myPendingCar = null;
+  myPendingInsertIndex = null;
   oppPendingCar = null;
+  oppPendingInsertIndex = null;
   render();
 
   setTimeout(() => {
