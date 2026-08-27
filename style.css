@@ -100,39 +100,113 @@ input:focus {
   min-height: 18px;
 }
 
-/* ---------- Counter screen ---------- */
+/* ---------- Game screen ---------- */
 
-#counter-screen {
+#game-screen {
   position: fixed;
   inset: 0;
+  overflow-y: auto;
+  padding: 24px 16px 60px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 32px;
+  gap: 16px;
 }
 
-.conn-status {
-  position: fixed;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
+#round-info {
   font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  opacity: 0.5;
+  opacity: 0.6;
+  margin: 0;
 }
 
-.counter-value {
-  font-size: min(28vw, 220px);
-  font-weight: 800;
-  line-height: 1;
-  background: linear-gradient(135deg, #4aa8ff, #6a5cff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  font-variant-numeric: tabular-nums;
+.board {
+  width: min(560px, 100%);
+  display: flex;
+  gap: 16px;
 }
+
+.side {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.side h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
+.side p { margin: 0 0 4px; }
+
+.cars {
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+#hand, #target-list {
+  width: min(560px, 100%);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.card-btn {
+  min-width: 140px;
+  flex: 1 1 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  text-align: left;
+  font-size: 13px;
+  white-space: normal;
+}
+
+.card-btn strong { font-size: 14px; }
+.card-btn span { opacity: 0.8; font-weight: 400; }
+
+.card-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+#target-area {
+  width: min(560px, 100%);
+  text-align: center;
+}
+
+#target-area p { margin: 0 0 10px; opacity: 0.7; font-size: 13px; }
+
+#log {
+  width: min(560px, 100%);
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 13px;
+  opacity: 0.75;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 10px;
+}
+
+#log p { margin: 0 0 4px; }
+
+#game-over {
+  width: min(560px, 100%);
+  text-align: center;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+#game-over p { font-size: 20px; font-weight: 700; margin: 0 0 12px; }
 
 button {
   border-radius: 8px;
@@ -158,10 +232,7 @@ button:active {
   font-size: 15px;
 }
 
-#btn-increment {
-  width: min(50vw, 240px);
-  height: min(50vw, 240px);
-  border-radius: 50%;
-  font-size: 42px;
-  box-shadow: 0 10px 40px rgba(74, 168, 255, 0.35);
+#target-cancel, #btn-restart {
+  padding: 10px 16px;
+  font-size: 14px;
 }

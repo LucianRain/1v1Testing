@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shared Counter</title>
+  <title>Reroute</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="menu-overlay">
     <div class="panel">
-      <h1>Shared Counter</h1>
-      <p class="subtitle">P2P test &mdash; connects two browsers directly, no server needed.</p>
+      <h1>Reroute</h1>
+      <p class="subtitle">1v1 train duel &mdash; connects two browsers directly, no server needed.</p>
 
       <div class="menu-section">
         <h2>Host a game</h2>
@@ -31,10 +31,38 @@
     </div>
   </div>
 
-  <div id="counter-screen" class="hidden">
-    <p class="conn-status" id="conn-status">Connected</p>
-    <div class="counter-value" id="counter-value">0</div>
-    <button id="btn-increment">+1</button>
+  <div id="game-screen" class="hidden">
+    <p id="round-info">Round 1</p>
+
+    <div class="board">
+      <div class="side">
+        <h3>You</h3>
+        <p id="my-hp">You: 10 HP</p>
+        <p id="my-cars" class="cars">No coupled cars.</p>
+      </div>
+      <div class="side">
+        <h3>Opponent</h3>
+        <p id="opp-hp">Opponent: 10 HP</p>
+        <p id="opp-cars" class="cars">No coupled cars.</p>
+      </div>
+    </div>
+
+    <div id="hand"></div>
+
+    <div id="target-area" class="hidden">
+      <p>Choose a target:</p>
+      <div id="target-list"></div>
+      <button id="target-cancel">Cancel</button>
+    </div>
+
+    <p id="wait-status" class="status hidden">Waiting for opponent...</p>
+
+    <div id="log"></div>
+
+    <div id="game-over" class="hidden">
+      <p id="game-over-text"></p>
+      <button id="btn-restart">Play Again</button>
+    </div>
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
