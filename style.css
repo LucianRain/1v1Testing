@@ -303,6 +303,15 @@ input:focus {
   padding: 2px 5px;
 }
 
+.car-flag.disabled {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #2a1210;
+  background: #e2645a;
+}
+
 .shield-icon {
   width: 9px;
   height: 10px;
@@ -540,6 +549,13 @@ input:focus {
   text-transform: uppercase;
   opacity: 0.6;
   margin: 0 0 4px;
+}
+
+.hint {
+  font-size: 12px;
+  opacity: 0.4;
+  margin: 0;
+  min-height: 1em;
 }
 
 #hand {

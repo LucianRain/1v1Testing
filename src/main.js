@@ -33,6 +33,7 @@ const btnPass = document.getElementById('btn-pass');
 const targetAreaEl = document.getElementById('target-area');
 const targetCancelBtn = document.getElementById('target-cancel');
 const waitStatusEl = document.getElementById('wait-status');
+const hintTextEl = document.getElementById('hint-text');
 const cardRevealEl = document.getElementById('card-reveal');
 const revealTitleEl = document.getElementById('reveal-title');
 const revealDescEl = document.getElementById('reveal-desc');
@@ -229,8 +230,9 @@ function renderTrains(hpOverride) {
     else if (pw.side === oppRole) insertAt(oppCars, pw.car, pw.index);
   }
 
-  renderTrain(myTrainEl, myCars, myValidIds, myStagedFlagPreview());
-  renderTrain(oppTrainEl, oppCars, oppValidIds);
+  const flagPreviews = myStagedFlagPreviews();
+  renderTrain(myTrainEl, myCars, myValidIds, flagPreviews.mine);
+  renderTrain(oppTrainEl, oppCars, oppValidIds, flagPreviews.opp);
 
   const myHp = hpOverride ? hpOverride.my : matchState[myRole].hp;
   const oppHp = hpOverride ? hpOverride.opp : matchState[oppRole].hp;
@@ -328,19 +330,21 @@ function positionTrain(trainEl, trackEl, hp, lastWidth) {
   return trainWidth;
 }
 
-// Overcharge/Reinforce only set a flag on an existing car of mine - there's
+// Overcharge/Reinforce/Sabotage only flip a flag on an existing car - there's
 // no new car to preview the way pendingCarFor() does for coupling cards. So
 // this shows the flag itself the instant I choose the target (staged or
 // already committed and waiting on the opponent), well before the real
-// resolveSetup() actually runs and makes it true in matchState. Only ever
-// applies to my own side - the opponent's play stays gated behind their
-// reveal popup as usual.
-function myStagedFlagPreview() {
+// resolveSetup() actually runs and makes it true in matchState. This is only
+// ever driven by MY OWN play - the opponent's own plays stay gated behind
+// their reveal popup as usual, even though Sabotage's target lands on their
+// train from my perspective.
+function myStagedFlagPreviews() {
   const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
-  if (!play) return null;
-  if (play.cardId === 'overcharge') return { target: play.target, flag: 'overcharge' };
-  if (play.cardId === 'reinforce') return { target: play.target, flag: 'shield' };
-  return null;
+  if (!play) return { mine: null, opp: null };
+  if (play.cardId === 'overcharge') return { mine: { target: play.target, flag: 'overcharge' }, opp: null };
+  if (play.cardId === 'reinforce') return { mine: { target: play.target, flag: 'shield' }, opp: null };
+  if (play.cardId === 'sabotage') return { mine: null, opp: { target: play.target, flag: 'disabled' } };
+  return { mine: null, opp: null };
 }
 
 function renderTrain(el, cars, validIds, flagPreview) {
@@ -370,6 +374,7 @@ function renderTrain(el, cars, validIds, flagPreview) {
     const flagKinds = [];
     if (car.overcharged || previewFlag === 'overcharge') flagKinds.push('overcharge');
     if (car.protected || previewFlag === 'shield') flagKinds.push('shield');
+    if (car.disabledThisRound || previewFlag === 'disabled') flagKinds.push('disabled');
     if (flagKinds.length) {
       const flagRow = document.createElement('div');
       flagRow.className = 'car-flags';
@@ -378,6 +383,8 @@ function renderTrain(el, cars, validIds, flagPreview) {
         flag.className = `car-flag ${kind}`;
         if (kind === 'overcharge') {
           flag.textContent = 'Overcharged';
+        } else if (kind === 'disabled') {
+          flag.textContent = 'Disabled';
         } else {
           const icon = document.createElement('div');
           icon.className = 'shield-icon';
@@ -407,6 +414,33 @@ function renderTrain(el, cars, validIds, flagPreview) {
   el.appendChild(engine);
 }
 
+// Low-key, always-current "what do I do now" line - covers whatever isn't
+// already explained by a more prominent status (the target-area panel, the
+// "Waiting for opponent" line, or the trigger-phase animations themselves).
+function updateHint() {
+  let text = '';
+  if (gameOver || resolving) {
+    text = '';
+  } else if (dragState) {
+    text = 'Drop it anywhere along your train.';
+  } else if (targetDragState) {
+    text = 'Drag to a target, then release to aim.';
+  } else if (awaitingAim) {
+    text = 'Drag from your Wrecking Car to aim it at an enemy car.';
+  } else if (refreshAimState) {
+    text = 'Drag from your Wrecking Car to re-aim it.';
+  } else if (pendingPlay) {
+    text = '';
+  } else if (myPlay) {
+    text = '';
+  } else if (stagedPlay) {
+    text = 'Staged - press End Turn to lock it in, or choose a different card.';
+  } else {
+    text = 'Play a card from your hand, or press End Turn to pass.';
+  }
+  hintTextEl.textContent = text;
+}
+
 function renderHand() {
   handEl.innerHTML = '';
   const locked = !!myPlay || !!pendingPlay || gameOver;
@@ -418,6 +452,7 @@ function renderHand() {
   waitStatusEl.classList.toggle('hidden', !myPlay || gameOver);
   if (oppPlay) waitStatusEl.textContent = 'Resolving...';
   else waitStatusEl.textContent = vsBot ? 'Bot is thinking...' : 'Waiting for opponent...';
+  updateHint();
 
   myHand.forEach((cardId, idx) => {
     const card = CARDS[cardId];
@@ -474,6 +509,7 @@ function startCardDrag(e, cardId, handIdx, sourceBtn) {
   dragState = { cardId, handIdx, ghost, indicator, insertIndex: null, overTrain: false, sourceBtn };
   moveGhost(e.clientX, e.clientY);
   updateDropTarget(e.clientX, e.clientY);
+  updateHint();
 
   sourceBtn.setPointerCapture(e.pointerId);
   sourceBtn.addEventListener('pointermove', onCardDragMove);
@@ -529,7 +565,10 @@ function onCardDragEnd(e) {
   sourceBtn.removeEventListener('pointerup', onCardDragEnd);
   sourceBtn.removeEventListener('pointercancel', onCardDragEnd);
   dragState = null;
-  if (!overTrain) return; // dropped off the train, cancel - the card just stays in hand
+  if (!overTrain) {
+    updateHint();
+    return; // dropped off the train, cancel - the card just stays in hand
+  }
 
   if (cardId === 'claw') {
     // Placed, not yet committed - still needs aiming at an enemy car before
@@ -569,6 +608,7 @@ function startArcTargeting(e, sourceEl, onComplete) {
 
   targetDragState = { originX, originY, svg, reticle, sourceEl, onComplete };
   updateArc(e.clientX, e.clientY);
+  updateHint();
 
   sourceEl.setPointerCapture(e.pointerId);
   sourceEl.addEventListener('pointermove', onTargetDragMove);
