@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, MAX_HP, createDeck, draw, redrawHand, deriveSeed, createMatchState, resolveRound, validTargets, checkWinner } from './game.js';
+import { CARDS, MAX_HP, createDeck, draw, redrawHand, ensurePlayable, deriveSeed, createMatchState, resolveRound, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -47,6 +47,7 @@ let vsBot = false;
 let botDeck = null;
 let botHand = [];
 let pendingPlay = null; // { cardId, handIdx } while picking a target on the field
+let myPendingCar = null; // optimistic preview of a wagon/armor I just committed
 let revealTimeout = null;
 
 btnBot.addEventListener('click', () => {
@@ -89,13 +90,14 @@ net.addEventListener('close', () => {
 function startMatch(seed) {
   matchState = createMatchState();
   myDeck = createDeck(deriveSeed(seed, myRole));
-  myHand = [draw(myDeck), draw(myDeck), draw(myDeck)];
+  myHand = ensurePlayable(matchState, myRole, myDeck, [draw(myDeck), draw(myDeck), draw(myDeck)]);
   if (vsBot) {
     botDeck = createDeck(deriveSeed(seed, oppRole));
-    botHand = [draw(botDeck), draw(botDeck), draw(botDeck)];
+    botHand = ensurePlayable(matchState, oppRole, botDeck, [draw(botDeck), draw(botDeck), draw(botDeck)]);
   }
   myPlay = null;
   oppPlay = null;
+  myPendingCar = null;
   gameOver = false;
   render();
 }
@@ -126,7 +128,10 @@ function renderTrains() {
     else myValidIds = ids;
   }
 
-  renderTrain(myTrainEl, matchState[myRole].cars, myValidIds);
+  const myCars = matchState[myRole].cars.slice();
+  if (myPendingCar) myCars.push(myPendingCar);
+
+  renderTrain(myTrainEl, myCars, myValidIds);
   renderTrain(oppTrainEl, matchState[oppRole].cars, oppValidIds);
 }
 
@@ -136,10 +141,10 @@ function renderTrain(el, cars, validIds) {
   // Cars trail behind the engine, which leads on the right - the train faces right.
   cars.forEach((car) => {
     const box = document.createElement('div');
-    box.className = `car-box ${car.type}`;
+    box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}`;
     const stat = car.type === 'wagon' ? `${car.dmgPerRound}/rd` : `${car.blockCharges}x block`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
-    if (validIds && validIds.has(car.id)) {
+    if (validIds && car.id != null && validIds.has(car.id)) {
       box.classList.add('targetable');
       box.addEventListener('click', () => chooseTarget(car.id));
     }
@@ -225,7 +230,10 @@ function playBotTurn() {
 function commitPlay(cardId, handIdx, target) {
   myHand.splice(handIdx, 1);
   myPlay = { card: cardId, target };
+  if (cardId === 'wagon') myPendingCar = { type: 'wagon', dmgPerRound: 1, pending: true };
+  if (cardId === 'armor') myPendingCar = { type: 'armor', blockCharges: 1, pending: true };
   targetAreaEl.classList.add('hidden');
+  renderTrains();
   renderHand();
   if (vsBot) {
     setTimeout(playBotTurn, BOT_DELAY_MS);
@@ -245,6 +253,9 @@ function tryResolve() {
   resolveRound(matchState, plays);
   if (myCardPlayed) myHand.push(draw(myDeck));
   if (vsBot && oppCardPlayed) botHand.push(draw(botDeck));
+  myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
+  if (vsBot) botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
+  myPendingCar = null;
   myPlay = null;
   oppPlay = null;
 

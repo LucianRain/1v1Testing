@@ -228,6 +228,11 @@ input:focus {
   box-shadow: 0 0 0 2px rgba(255, 209, 90, 0.8);
 }
 
+.car-box.pending {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .car-box.targetable {
     animation: wiggle 0.35s ease-in-out infinite;

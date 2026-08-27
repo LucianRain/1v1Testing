@@ -62,6 +62,34 @@ export function redrawHand(deck, hand, handSize = 3) {
   return newHand;
 }
 
+function isPlayable(state, side, cardId) {
+  const card = CARDS[cardId];
+  if (!card.target) return true;
+  return validTargets(state, side, cardId).length > 0;
+}
+
+// Guarantees at least one playable card in hand, whenever the deck can supply
+// one: if every card is currently unplayable (a targeted card with nothing to
+// target), keep drawing until a playable one turns up and swap it in. Draws
+// that don't help go back to the bottom of the pile rather than being lost.
+export function ensurePlayable(state, side, deck, hand) {
+  if (hand.some((c) => isPlayable(state, side, c))) return hand;
+
+  const rejected = [];
+  let found = null;
+  for (let i = 0; i < 20 && found === null; i++) {
+    const candidate = draw(deck);
+    if (isPlayable(state, side, candidate)) found = candidate;
+    else rejected.push(candidate);
+  }
+  deck.pile = rejected.concat(deck.pile);
+  if (found === null) return hand;
+
+  const newHand = hand.slice();
+  newHand[newHand.findIndex((c) => !isPlayable(state, side, c))] = found;
+  return newHand;
+}
+
 export function createMatchState() {
   return {
     round: 1,
