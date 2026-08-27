@@ -229,7 +229,7 @@ function renderTrains(hpOverride) {
     else if (pw.side === oppRole) insertAt(oppCars, pw.car, pw.index);
   }
 
-  renderTrain(myTrainEl, myCars, myValidIds);
+  renderTrain(myTrainEl, myCars, myValidIds, myStagedFlagPreview());
   renderTrain(oppTrainEl, oppCars, oppValidIds);
 
   const myHp = hpOverride ? hpOverride.my : matchState[myRole].hp;
@@ -328,7 +328,22 @@ function positionTrain(trainEl, trackEl, hp, lastWidth) {
   return trainWidth;
 }
 
-function renderTrain(el, cars, validIds) {
+// Overcharge/Reinforce only set a flag on an existing car of mine - there's
+// no new car to preview the way pendingCarFor() does for coupling cards. So
+// this shows the flag itself the instant I choose the target (staged or
+// already committed and waiting on the opponent), well before the real
+// resolveSetup() actually runs and makes it true in matchState. Only ever
+// applies to my own side - the opponent's play stays gated behind their
+// reveal popup as usual.
+function myStagedFlagPreview() {
+  const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
+  if (!play) return null;
+  if (play.cardId === 'overcharge') return { target: play.target, flag: 'overcharge' };
+  if (play.cardId === 'reinforce') return { target: play.target, flag: 'shield' };
+  return null;
+}
+
+function renderTrain(el, cars, validIds, flagPreview) {
   el.innerHTML = '';
 
   // Cars trail behind the engine, which leads on the right - the train faces right.
@@ -351,9 +366,10 @@ function renderTrain(el, cars, validIds) {
     else if (car.type === 'claw') stat = awaitingPlacementAim || awaitingRefreshAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
+    const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
     const flagKinds = [];
-    if (car.overcharged) flagKinds.push('overcharge');
-    if (car.protected) flagKinds.push('shield');
+    if (car.overcharged || previewFlag === 'overcharge') flagKinds.push('overcharge');
+    if (car.protected || previewFlag === 'shield') flagKinds.push('shield');
     if (flagKinds.length) {
       const flagRow = document.createElement('div');
       flagRow.className = 'car-flags';
