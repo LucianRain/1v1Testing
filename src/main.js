@@ -70,6 +70,7 @@ let dragState = null; // in-progress drag of a train-car hand card
 let targetDragState = null; // in-progress arc-targeting drag (Sabotage, or aiming a placed Wrecking Car)
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
 let refreshAimState = null; // { handIdx, carId } while reviving a spent Wrecking Car needs a fresh aim
+let stagedPlay = null; // { cardId, handIdx, target, insertIndex, refreshTarget } - what End Turn submits; null = pass
 let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
@@ -77,7 +78,7 @@ let inTriggerPhase = false;
 let pulsingIds = new Set(); // car ids to pulse on the next render, then cleared
 let revealTimeout = null;
 let bannerTimeout = null;
-let turnTimeout = null; // fires submitPass() when the 15s turn clock runs out
+let turnTimeout = null; // fires endTurn() when the 15s turn clock runs out
 let turnTickInterval = null; // updates the visible countdown every tick
 let turnDeadline = null; // Date.now() timestamp the current turn auto-ends at
 
@@ -148,6 +149,7 @@ function startMatch(seed) {
   oppPendingInsertIndex = null;
   awaitingAim = null;
   refreshAimState = null;
+  stagedPlay = null;
   phantomWrecks = [];
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
@@ -317,6 +319,7 @@ function renderHand() {
     const targets = needsTarget ? validTargets(matchState, myRole, cardId) : [];
     const disabled = locked || (needsTarget && targets.length === 0);
     btn.disabled = disabled;
+    if (stagedPlay && stagedPlay.handIdx === idx) btn.classList.add('staged');
     btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
     if (card.persistent) {
       // Train cars (wagon/armor/repair/claw): drag onto your train to
@@ -334,7 +337,7 @@ function renderHand() {
         if (needsTarget) {
           beginTargeting(cardId, idx);
         } else {
-          commitPlay(cardId, idx, null);
+          stagePlay(cardId, idx, null);
         }
       });
     }
@@ -431,7 +434,7 @@ function onCardDragEnd(e) {
     renderTrains();
     renderHand();
   } else {
-    commitPlay(cardId, handIdx, null, insertIndex);
+    stagePlay(cardId, handIdx, null, insertIndex);
   }
 }
 
@@ -508,7 +511,7 @@ function startSabotageDrag(e, cardId, handIdx, sourceBtn) {
   startArcTargeting(e, sourceBtn, (targetId) => {
     pendingPlay = null;
     if (targetId != null) {
-      commitPlay(cardId, handIdx, targetId);
+      stagePlay(cardId, handIdx, targetId);
     } else {
       renderTrains();
       renderHand();
@@ -525,7 +528,7 @@ function startClawAim(e, boxEl) {
     if (targetId != null) {
       awaitingAim = null;
       pendingPlay = null;
-      commitPlay(cardId, handIdx, targetId, insertIndex);
+      stagePlay(cardId, handIdx, targetId, insertIndex);
     } else {
       renderTrains();
       renderHand();
@@ -553,7 +556,7 @@ function startRefreshAimDrag(e, boxEl) {
     if (targetId != null) {
       refreshAimState = null;
       pendingPlay = null;
-      commitPlay('refresh', handIdx, carId, null, targetId);
+      stagePlay('refresh', handIdx, carId, null, targetId);
     } else {
       renderTrains();
       renderHand();
@@ -584,7 +587,7 @@ function chooseTarget(targetId) {
   }
 
   pendingPlay = null;
-  commitPlay(cardId, handIdx, targetId);
+  stagePlay(cardId, handIdx, targetId);
 }
 
 targetCancelBtn.addEventListener('click', () => {
@@ -594,12 +597,14 @@ targetCancelBtn.addEventListener('click', () => {
   renderHand();
 });
 
-btnPass.addEventListener('click', submitPass);
+btnPass.addEventListener('click', endTurn);
 
-// Cleanly cancels whatever mid-flight interaction the player was in (a
-// train-car drag, an arc-targeting drag, or a two-step Wrecking Car
-// placement/aim or Refresh-aim) so an End Turn press or a timeout can
-// safely force a pass no matter what state the UI was in.
+// Cleanly cancels whatever mid-flight (not-yet-staged) interaction the
+// player was in - a train-car drag, an arc-targeting drag, or a Wrecking
+// Car/Refresh placement that's been dropped but not yet aimed - so ending
+// the turn can't leave stray state behind. A car that already finished
+// staging (myPendingCar with no aim still pending) is left alone; that's
+// what's about to be submitted, not something to abandon.
 function abortInProgressInteractions() {
   if (dragState) {
     dragState.ghost.remove();
@@ -618,17 +623,31 @@ function abortInProgressInteractions() {
     targetDragState = null;
   }
   pendingPlay = null;
+  if (awaitingAim || refreshAimState) {
+    // Placed (or revived) but never aimed - it never became a real staged
+    // play, so its preview goes too.
+    myPendingCar = null;
+    myPendingInsertIndex = null;
+  }
   awaitingAim = null;
   refreshAimState = null;
-  myPendingCar = null;
-  myPendingInsertIndex = null;
 }
 
-// Shared by the End Turn button and the 15s clock running out: whatever the
-// player was doing, it's abandoned and this round counts as a pass for them.
-function submitPass() {
+// Shared by the End Turn button and the 15s clock running out. Whatever is
+// currently staged is what actually gets submitted; if nothing was staged,
+// this round counts as a pass.
+function endTurn() {
   clearTurnTimer();
   abortInProgressInteractions();
+
+  const staged = stagedPlay;
+  stagedPlay = null;
+
+  if (staged) {
+    commitPlay(staged.cardId, staged.handIdx, staged.target, staged.insertIndex, staged.refreshTarget);
+    return;
+  }
+
   myHand = redrawHand(myDeck, myHand);
   myPlay = { card: null, target: null };
   targetAreaEl.classList.add('hidden');
@@ -647,7 +666,7 @@ function startTurnTimer() {
   turnDeadline = Date.now() + TURN_TIME_MS;
   updateTurnTimerDisplay();
   turnTickInterval = setInterval(updateTurnTimerDisplay, 250);
-  turnTimeout = setTimeout(submitPass, TURN_TIME_MS);
+  turnTimeout = setTimeout(endTurn, TURN_TIME_MS);
 }
 
 function clearTurnTimer() {
@@ -672,8 +691,25 @@ function playBotTurn() {
   handleOppPlayKnown(botChoice.card, botChoice.target, null, botChoice.refreshTarget);
 }
 
+// Records a choice locally without ending the turn: no network send, no
+// lock-in. The player can keep browsing their hand and stage something else
+// instead - only End Turn (button or the 15s clock) actually submits
+// whatever's currently staged.
+function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
+  insertIndex = insertIndex ?? null;
+  refreshTarget = refreshTarget ?? null;
+  stagedPlay = { cardId, handIdx, target, insertIndex, refreshTarget };
+  myPendingCar = pendingCarFor(cardId);
+  myPendingInsertIndex = insertIndex;
+  targetAreaEl.classList.add('hidden');
+  renderTrains();
+  renderHand();
+}
+
+// Actually submits a play over the network and starts resolution. Only ever
+// called once per round, from endTurn() - never directly from a hand
+// interaction anymore.
 function commitPlay(cardId, handIdx, target, insertIndex, refreshTarget) {
-  clearTurnTimer();
   myHand.splice(handIdx, 1);
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
