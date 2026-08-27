@@ -24,7 +24,6 @@ const oppTrainEl = document.getElementById('opp-train');
 const handEl = document.getElementById('hand');
 const btnPass = document.getElementById('btn-pass');
 const targetAreaEl = document.getElementById('target-area');
-const targetListEl = document.getElementById('target-list');
 const targetCancelBtn = document.getElementById('target-cancel');
 const waitStatusEl = document.getElementById('wait-status');
 const gameOverEl = document.getElementById('game-over');
@@ -44,6 +43,7 @@ let gameOver = false;
 let vsBot = false;
 let botDeck = null;
 let botHand = [];
+let pendingPlay = null; // { cardId, handIdx } while picking a target on the field
 
 btnBot.addEventListener('click', () => {
   vsBot = true;
@@ -100,8 +100,7 @@ function render() {
   roundInfoEl.textContent = `Round ${matchState.round}`;
   renderHp(myHpEl, myHpFillEl, matchState[myRole].hp);
   renderHp(oppHpEl, oppHpFillEl, matchState[oppRole].hp);
-  renderTrain(myTrainEl, matchState[myRole].cars);
-  renderTrain(oppTrainEl, matchState[oppRole].cars);
+  renderTrains();
   renderHand();
 }
 
@@ -112,7 +111,22 @@ function renderHp(labelEl, fillEl, hp) {
   fillEl.classList.toggle('low', hp <= MAX_HP * 0.3);
 }
 
-function renderTrain(el, cars) {
+function renderTrains() {
+  let myValidIds = null;
+  let oppValidIds = null;
+
+  if (pendingPlay) {
+    const card = CARDS[pendingPlay.cardId];
+    const ids = new Set(validTargets(matchState, myRole, pendingPlay.cardId));
+    if (card.target === 'enemy_car') oppValidIds = ids;
+    else myValidIds = ids;
+  }
+
+  renderTrain(myTrainEl, matchState[myRole].cars, myValidIds);
+  renderTrain(oppTrainEl, matchState[oppRole].cars, oppValidIds);
+}
+
+function renderTrain(el, cars, validIds) {
   el.innerHTML = '';
 
   // Cars trail behind the engine, which leads on the right - the train faces right.
@@ -121,6 +135,10 @@ function renderTrain(el, cars) {
     box.className = `car-box ${car.type}`;
     const stat = car.type === 'wagon' ? `${car.dmgPerRound}/rd` : `${car.blockCharges}x block`;
     box.innerHTML = `<strong>${car.type.toUpperCase()}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
+    if (validIds && validIds.has(car.id)) {
+      box.classList.add('targetable');
+      box.addEventListener('click', () => chooseTarget(car.id));
+    }
     el.appendChild(box);
   });
 
@@ -132,8 +150,7 @@ function renderTrain(el, cars) {
 
 function renderHand() {
   handEl.innerHTML = '';
-  targetAreaEl.classList.add('hidden');
-  const locked = !!myPlay || gameOver;
+  const locked = !!myPlay || !!pendingPlay || gameOver;
   btnPass.disabled = locked;
   waitStatusEl.classList.toggle('hidden', !myPlay || gameOver);
   waitStatusEl.textContent = 'Waiting for opponent...';
@@ -149,7 +166,7 @@ function renderHand() {
     btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
     btn.addEventListener('click', () => {
       if (needsTarget) {
-        showTargetPicker(cardId, idx, targets);
+        beginTargeting(cardId, idx);
       } else {
         commitPlay(cardId, idx, null);
       }
@@ -158,24 +175,25 @@ function renderHand() {
   });
 }
 
-function showTargetPicker(cardId, handIdx, targets) {
+function beginTargeting(cardId, handIdx) {
+  pendingPlay = { cardId, handIdx };
   targetAreaEl.classList.remove('hidden');
-  targetListEl.innerHTML = '';
-  const card = CARDS[cardId];
-  const pool = card.target === 'enemy_car' ? matchState[oppRole].cars : matchState[myRole].cars;
+  renderTrains();
+  renderHand();
+}
 
-  targets.forEach((targetId) => {
-    const car = pool.find((c) => c.id === targetId);
-    const btn = document.createElement('button');
-    btn.className = 'card-btn';
-    btn.textContent = `${car.type} #${car.id}`;
-    btn.addEventListener('click', () => commitPlay(cardId, handIdx, targetId));
-    targetListEl.appendChild(btn);
-  });
+function chooseTarget(targetId) {
+  if (!pendingPlay) return;
+  const { cardId, handIdx } = pendingPlay;
+  pendingPlay = null;
+  commitPlay(cardId, handIdx, targetId);
 }
 
 targetCancelBtn.addEventListener('click', () => {
+  pendingPlay = null;
   targetAreaEl.classList.add('hidden');
+  renderTrains();
+  renderHand();
 });
 
 btnPass.addEventListener('click', () => {

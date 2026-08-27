@@ -222,6 +222,23 @@ input:focus {
   background: rgba(90, 170, 217, 0.18);
 }
 
+.car-box.targetable {
+  cursor: pointer;
+  box-shadow: 0 0 0 2px rgba(255, 209, 90, 0.8);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .car-box.targetable {
+    animation: wiggle 0.35s ease-in-out infinite;
+  }
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-5deg); }
+  75% { transform: rotate(5deg); }
+}
+
 .center-strip {
   flex: 0 0 auto;
   width: 100%;
@@ -242,7 +259,7 @@ input:focus {
   margin: 0 0 4px;
 }
 
-#hand, #target-list {
+#hand {
   width: 100%;
   display: flex;
   flex-wrap: wrap;
