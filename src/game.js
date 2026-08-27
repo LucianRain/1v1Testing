@@ -254,7 +254,8 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     blocked = true;
     blockedByCarId = armorCar.id;
     log.push(`${targetSide}'s armor car blocks ${sourceLabel}`);
-    if (armorCar.blockCharges <= 0) removeCar(state[targetSide].cars, armorCar.id);
+    // Spent, not destroyed - it stays coupled, just inert until an
+    // Overcharge (or another Armor Car) gives it something to block with.
   } else {
     state[targetSide].hp -= amount;
     log.push(`${targetSide} takes ${amount} damage from ${sourceLabel}`);

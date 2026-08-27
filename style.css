@@ -271,6 +271,11 @@ input:focus {
   border-style: dashed;
 }
 
+.car-box.spent {
+  opacity: 0.5;
+  filter: grayscale(0.6);
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .car-box.pulse {
     animation: car-pulse 0.4s ease;

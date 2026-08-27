@@ -221,11 +221,12 @@ function renderTrain(el, cars, validIds) {
   cars.forEach((car) => {
     const box = document.createElement('div');
     const pulse = car.id != null && pulsingIds.has(car.id);
-    box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}`;
+    const spent = car.type === 'armor' && car.blockCharges <= 0;
+    box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}${spent ? ' spent' : ''}`;
     if (car.id != null) box.dataset.carId = car.id;
     let stat;
     if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
-    else if (car.type === 'armor') stat = `${car.blockCharges}x block`;
+    else if (car.type === 'armor') stat = spent ? 'spent' : `${car.blockCharges}x block`;
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
     if (validIds && car.id != null && validIds.has(car.id)) {
