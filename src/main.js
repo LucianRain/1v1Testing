@@ -47,6 +47,7 @@ const EVENT_PAUSE_MS = 300; // non-projectile damage events (sudden death)
 const EVENT_GAP_MS = 150; // breather between damage events once one has landed
 const WRECK_LINE_MS = 380; // Wrecking Car's grapple line reaching the target
 const WRECK_PULL_MS = 900; // pull + derail + freeze + fade, one combined animation
+const TURN_TIME_MS = 15000; // how long you have to act before your turn auto-passes
 
 let myRole = null; // 'host' | 'client'
 let oppRole = null;
@@ -76,6 +77,9 @@ let inTriggerPhase = false;
 let pulsingIds = new Set(); // car ids to pulse on the next render, then cleared
 let revealTimeout = null;
 let bannerTimeout = null;
+let turnTimeout = null; // fires submitPass() when the 15s turn clock runs out
+let turnTickInterval = null; // updates the visible countdown every tick
+let turnDeadline = null; // Date.now() timestamp the current turn auto-ends at
 
 function pendingCarFor(cardId) {
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true };
@@ -128,6 +132,7 @@ net.addEventListener('close', () => {
 });
 
 function startMatch(seed) {
+  clearTurnTimer();
   matchState = createMatchState();
   myDeck = createDeck(deriveSeed(seed, myRole));
   myHand = ensurePlayable(matchState, myRole, myDeck, [draw(myDeck), draw(myDeck), draw(myDeck)]);
@@ -151,6 +156,7 @@ function startMatch(seed) {
   resolving = false;
   gameOver = false;
   render();
+  startTurnTimer();
 }
 
 function render() {
@@ -295,6 +301,10 @@ function renderHand() {
   handEl.innerHTML = '';
   const locked = !!myPlay || !!pendingPlay || gameOver;
   btnPass.disabled = locked;
+  if (locked) {
+    btnPass.textContent = 'End Turn';
+    btnPass.classList.remove('low-time');
+  }
   waitStatusEl.classList.toggle('hidden', !myPlay || gameOver);
   if (oppPlay) waitStatusEl.textContent = 'Resolving...';
   else waitStatusEl.textContent = vsBot ? 'Bot is thinking...' : 'Waiting for opponent...';
@@ -584,10 +594,45 @@ targetCancelBtn.addEventListener('click', () => {
   renderHand();
 });
 
-btnPass.addEventListener('click', () => {
+btnPass.addEventListener('click', submitPass);
+
+// Cleanly cancels whatever mid-flight interaction the player was in (a
+// train-car drag, an arc-targeting drag, or a two-step Wrecking Car
+// placement/aim or Refresh-aim) so an End Turn press or a timeout can
+// safely force a pass no matter what state the UI was in.
+function abortInProgressInteractions() {
+  if (dragState) {
+    dragState.ghost.remove();
+    dragState.indicator.remove();
+    dragState.sourceBtn.removeEventListener('pointermove', onCardDragMove);
+    dragState.sourceBtn.removeEventListener('pointerup', onCardDragEnd);
+    dragState.sourceBtn.removeEventListener('pointercancel', onCardDragEnd);
+    dragState = null;
+  }
+  if (targetDragState) {
+    targetDragState.svg.remove();
+    targetDragState.reticle.remove();
+    targetDragState.sourceEl.removeEventListener('pointermove', onTargetDragMove);
+    targetDragState.sourceEl.removeEventListener('pointerup', onTargetDragEnd);
+    targetDragState.sourceEl.removeEventListener('pointercancel', onTargetDragEnd);
+    targetDragState = null;
+  }
+  pendingPlay = null;
+  awaitingAim = null;
+  refreshAimState = null;
+  myPendingCar = null;
+  myPendingInsertIndex = null;
+}
+
+// Shared by the End Turn button and the 15s clock running out: whatever the
+// player was doing, it's abandoned and this round counts as a pass for them.
+function submitPass() {
+  clearTurnTimer();
+  abortInProgressInteractions();
   myHand = redrawHand(myDeck, myHand);
   myPlay = { card: null, target: null };
   targetAreaEl.classList.add('hidden');
+  renderTrains();
   renderHand();
   if (vsBot) {
     setTimeout(playBotTurn, BOT_DELAY_MS);
@@ -595,7 +640,30 @@ btnPass.addEventListener('click', () => {
     net.send({ t: 'play', card: null, target: null });
     runResolution();
   }
-});
+}
+
+function startTurnTimer() {
+  clearTurnTimer();
+  turnDeadline = Date.now() + TURN_TIME_MS;
+  updateTurnTimerDisplay();
+  turnTickInterval = setInterval(updateTurnTimerDisplay, 250);
+  turnTimeout = setTimeout(submitPass, TURN_TIME_MS);
+}
+
+function clearTurnTimer() {
+  if (turnTimeout) clearTimeout(turnTimeout);
+  if (turnTickInterval) clearInterval(turnTickInterval);
+  turnTimeout = null;
+  turnTickInterval = null;
+  turnDeadline = null;
+}
+
+function updateTurnTimerDisplay() {
+  if (!turnDeadline || btnPass.disabled) return;
+  const secondsLeft = Math.max(0, Math.ceil((turnDeadline - Date.now()) / 1000));
+  btnPass.textContent = `End Turn (${secondsLeft}s)`;
+  btnPass.classList.toggle('low-time', secondsLeft <= 5);
+}
 
 function playBotTurn() {
   const botChoice = chooseBotPlay(matchState, oppRole, botHand);
@@ -605,6 +673,7 @@ function playBotTurn() {
 }
 
 function commitPlay(cardId, handIdx, target, insertIndex, refreshTarget) {
+  clearTurnTimer();
   myHand.splice(handIdx, 1);
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
@@ -866,6 +935,7 @@ function finishRound(plays) {
     myPlay = null;
     oppPlay = null;
     render();
+    startTurnTimer();
   }, BANNER_MS);
 }
 

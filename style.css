@@ -351,11 +351,6 @@ input:focus {
   box-shadow: 0 0 0 2px rgba(255, 209, 90, 0.8);
 }
 
-.car-box.pending {
-  filter: brightness(0.7);
-  border-style: dashed;
-}
-
 .car-box.spent {
   filter: grayscale(0.6) brightness(0.7);
 }
@@ -716,4 +711,9 @@ button:active {
 #btn-pass:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+#btn-pass.low-time {
+  background: linear-gradient(90deg, #e0553f, #ff8a4a);
+  opacity: 1;
 }
