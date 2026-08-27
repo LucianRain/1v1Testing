@@ -6,7 +6,7 @@ export const SUDDEN_DEATH_START_ROUND = 9;
 
 export const CARDS = {
   wagon: { name: 'Artillery Wagon', target: null, persistent: true, desc: 'Couples on: 2 dmg now, 1/round after' },
-  claw: { name: 'Wrecking Claw', target: 'enemy_car', persistent: false, desc: "Destroy one of their coupled cars" },
+  claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, desc: 'Couples on, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
   armor: { name: 'Armor Car', target: null, persistent: true, desc: 'Couples on: blocks your next hit(s)' },
   repair: { name: 'Repair Car', target: null, persistent: true, desc: 'Couples on: heals 1 HP every round' },
@@ -143,9 +143,10 @@ export function validTargets(state, side, cardId) {
 const SIDES = ['host', 'client'];
 
 // Round resolution is split into three stages so the UI can animate each one
-// separately: setup (claw/sabotage/overcharge/reinforce + new cars coupling
-// on) resolves first, then healing, then damage. Each stage mutates `state`
-// in place and returns its own log lines; run identically on both peers.
+// separately: setup (sabotage/overcharge/reinforce/refresh + new cars
+// coupling on, including a Wrecking Car firing the instant it couples)
+// resolves first, then healing, then damage. Each stage mutates `state` in
+// place and returns its own log lines; run identically on both peers.
 
 export function resolveSetup(state, plays) {
   const log = [];
@@ -153,17 +154,12 @@ export function resolveSetup(state, plays) {
   for (const s of SIDES) for (const car of state[s].cars) car.disabledThisRound = false;
   for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
 
-  // claw / sabotage / overcharge / reinforce
+  // sabotage / overcharge / reinforce / refresh - claw is handled below,
+  // alongside the other cars that couple onto the train.
   for (const s of SIDES) {
     const play = plays[s];
     const opp = otherSide(s);
-    if (play.card === 'claw') {
-      const car = findCar(state[opp].cars, play.target);
-      if (car && !car.protected) {
-        removeCar(state[opp].cars, car.id);
-        log.push(`${s} wrecks ${opp}'s ${car.type}`);
-      }
-    } else if (play.card === 'sabotage') {
+    if (play.card === 'sabotage') {
       const car = findCar(state[opp].cars, play.target);
       if (car && !car.protected) {
         car.disabledThisRound = true;
@@ -207,8 +203,22 @@ export function resolveSetup(state, plays) {
     } else if (play.card === 'repair') {
       car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false };
       log.push(`${s} couples a Repair Car`);
+    } else if (play.card === 'claw') {
+      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false };
+      log.push(`${s} couples a Wrecking Car`);
     }
     if (car) insertCar(state[s].cars, car, play.insertIndex);
+
+    // A Wrecking Car fires the instant it couples on, at whatever it was aimed at.
+    if (play.card === 'claw' && car) {
+      const opp = otherSide(s);
+      const target = findCar(state[opp].cars, play.target);
+      if (target && !target.protected) {
+        removeCar(state[opp].cars, target.id);
+        log.push(`${s}'s wrecking car destroys ${opp}'s ${target.type}`);
+      }
+      car.fired = true;
+    }
   }
 
   return log;

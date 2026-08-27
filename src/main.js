@@ -43,7 +43,7 @@ const REVEAL_MS = 1600; // how long the opponent's played card stays up
 const STAGE_MS = 550; // gap between setup / heal / damage in the resolution animation
 const BANNER_MS = 1300; // how long the "Round N" banner stays up
 const PROJECTILE_MS = 950; // wagon projectile travel time
-const EVENT_PAUSE_MS = 300; // non-projectile damage events (track break, DoT, sudden death)
+const EVENT_PAUSE_MS = 300; // non-projectile damage events (sudden death)
 const EVENT_GAP_MS = 150; // breather between damage events once one has landed
 
 let myRole = null; // 'host' | 'client'
@@ -64,6 +64,8 @@ let myPendingInsertIndex = null; // where in my train that preview goes
 let oppPendingCar = null; // same, for the opponent's just-revealed play
 let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
+let targetDragState = null; // in-progress arc-targeting drag (Sabotage, or aiming a placed Wrecking Car)
+let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
 let inTriggerPhase = false;
@@ -75,6 +77,7 @@ function pendingCarFor(cardId) {
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true };
   if (cardId === 'armor') return { type: 'armor', blockCharges: 1, pending: true };
   if (cardId === 'repair') return { type: 'repair', healPerRound: 1, pending: true };
+  if (cardId === 'claw') return { type: 'claw', pending: true };
   return null;
 }
 
@@ -133,6 +136,7 @@ function startMatch(seed) {
   myPendingInsertIndex = null;
   oppPendingCar = null;
   oppPendingInsertIndex = null;
+  awaitingAim = null;
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
   inTriggerPhase = false;
@@ -221,17 +225,22 @@ function renderTrain(el, cars, validIds) {
   cars.forEach((car) => {
     const box = document.createElement('div');
     const pulse = car.id != null && pulsingIds.has(car.id);
-    const spent = car.type === 'armor' && car.blockCharges <= 0;
+    const spent = (car.type === 'armor' && car.blockCharges <= 0) || (car.type === 'claw' && car.fired);
     box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}${spent ? ' spent' : ''}`;
     if (car.id != null) box.dataset.carId = car.id;
     let stat;
     if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
     else if (car.type === 'armor') stat = spent ? 'spent' : `${car.blockCharges}x block`;
+    else if (car.type === 'claw') stat = car.needsAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
     if (validIds && car.id != null && validIds.has(car.id)) {
       box.classList.add('targetable');
       box.addEventListener('click', () => chooseTarget(car.id));
+    }
+    if (car.pending && car.needsAim) {
+      box.classList.add('needs-aim');
+      box.addEventListener('pointerdown', (e) => startClawAim(e, box));
     }
     el.appendChild(box);
   });
@@ -260,10 +269,16 @@ function renderHand() {
     btn.disabled = disabled;
     btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
     if (card.persistent) {
-      // Train cars (wagon/armor/repair): drag onto your train to choose
-      // where in the order it couples on, instead of a plain click.
+      // Train cars (wagon/armor/repair/claw): drag onto your train to
+      // choose where in the order it couples on, instead of a plain click.
+      // A Wrecking Car (claw) then needs a second drag - see onCardDragEnd.
       btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startCardDrag(e, cardId, idx, btn));
+    } else if (cardId === 'sabotage') {
+      // Drag out an arcing targeting reticle at an enemy car instead of a
+      // two-step click.
+      btn.classList.add('draggable');
+      btn.addEventListener('pointerdown', (e) => startSabotageDrag(e, cardId, idx, btn));
     } else {
       btn.addEventListener('click', () => {
         if (needsTarget) {
@@ -353,9 +368,119 @@ function onCardDragEnd(e) {
   sourceBtn.removeEventListener('pointerup', onCardDragEnd);
   sourceBtn.removeEventListener('pointercancel', onCardDragEnd);
   dragState = null;
+  if (!overTrain) return; // dropped off the train, cancel - the card just stays in hand
 
-  if (overTrain) commitPlay(cardId, handIdx, null, insertIndex);
-  // else: dropped off the train, cancel - the card just stays in hand
+  if (cardId === 'claw') {
+    // Placed, not yet committed - still needs aiming at an enemy car before
+    // this play is real. Shows as a "needs-aim" preview; the second drag
+    // (from that car, via startClawAim) finishes the play.
+    awaitingAim = { cardId, handIdx, insertIndex };
+    myPendingCar = { type: 'claw', pending: true, needsAim: true };
+    myPendingInsertIndex = insertIndex;
+    pendingPlay = { cardId, handIdx }; // reuses the enemy-car highlight machinery
+    renderTrains();
+    renderHand();
+  } else {
+    commitPlay(cardId, handIdx, null, insertIndex);
+  }
+}
+
+// Shared arc-targeting reticle: drag from a source element (a hand card for
+// Sabotage, or a just-placed Wrecking Car on the train for aiming it) and an
+// arcing line + reticle follow the pointer. Releasing over a highlighted
+// (.targetable) car picks it; releasing anywhere else calls back with null.
+function startArcTargeting(e, sourceEl, onComplete) {
+  if (dragState || targetDragState) return;
+  e.preventDefault();
+  const rect = sourceEl.getBoundingClientRect();
+  const originX = rect.left + rect.width / 2;
+  const originY = rect.top + rect.height / 2;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'targeting-arc');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  svg.appendChild(path);
+  document.body.appendChild(svg);
+
+  const reticle = document.createElement('div');
+  reticle.className = 'targeting-reticle';
+  document.body.appendChild(reticle);
+
+  targetDragState = { originX, originY, svg, reticle, sourceEl, onComplete };
+  updateArc(e.clientX, e.clientY);
+
+  sourceEl.setPointerCapture(e.pointerId);
+  sourceEl.addEventListener('pointermove', onTargetDragMove);
+  sourceEl.addEventListener('pointerup', onTargetDragEnd);
+  sourceEl.addEventListener('pointercancel', onTargetDragEnd);
+}
+
+function onTargetDragMove(e) {
+  if (!targetDragState) return;
+  updateArc(e.clientX, e.clientY);
+}
+
+function updateArc(x, y) {
+  const { originX, originY, svg, reticle } = targetDragState;
+  const dx = x - originX;
+  const dy = y - originY;
+  const len = Math.hypot(dx, dy) || 1;
+  const px = -dy / len;
+  const py = dx / len;
+  const bow = Math.min(len * 0.35, 90);
+  const mx = (originX + x) / 2 + px * bow;
+  const my = (originY + y) / 2 + py * bow;
+  svg.querySelector('path').setAttribute('d', `M ${originX} ${originY} Q ${mx} ${my} ${x} ${y}`);
+  reticle.style.left = `${x}px`;
+  reticle.style.top = `${y}px`;
+}
+
+function onTargetDragEnd(e) {
+  if (!targetDragState) return;
+  const { svg, reticle, sourceEl, onComplete } = targetDragState;
+  svg.remove();
+  reticle.remove();
+  sourceEl.removeEventListener('pointermove', onTargetDragMove);
+  sourceEl.removeEventListener('pointerup', onTargetDragEnd);
+  sourceEl.removeEventListener('pointercancel', onTargetDragEnd);
+  targetDragState = null;
+
+  const dropEl = document.elementFromPoint(e.clientX, e.clientY);
+  const targetBox = dropEl ? dropEl.closest('.car-box.targetable') : null;
+  const targetId = targetBox && targetBox.dataset.carId != null ? Number(targetBox.dataset.carId) : null;
+  onComplete(targetId);
+}
+
+function startSabotageDrag(e, cardId, handIdx, sourceBtn) {
+  if (sourceBtn.disabled || dragState || targetDragState) return;
+  pendingPlay = { cardId, handIdx };
+  renderTrains(); // safe: doesn't touch the hand DOM the pointer is captured on
+  startArcTargeting(e, sourceBtn, (targetId) => {
+    pendingPlay = null;
+    if (targetId != null) {
+      commitPlay(cardId, handIdx, targetId);
+    } else {
+      renderTrains();
+      renderHand();
+    }
+  });
+}
+
+// Aiming a Wrecking Car that's already been placed (see onCardDragEnd). A
+// miss just leaves it waiting - the player can try again.
+function startClawAim(e, boxEl) {
+  if (!awaitingAim || dragState || targetDragState) return;
+  const { cardId, handIdx, insertIndex } = awaitingAim;
+  startArcTargeting(e, boxEl, (targetId) => {
+    if (targetId != null) {
+      awaitingAim = null;
+      pendingPlay = null;
+      commitPlay(cardId, handIdx, targetId, insertIndex);
+    } else {
+      renderTrains();
+      renderHand();
+    }
+  });
 }
 
 function beginTargeting(cardId, handIdx) {
