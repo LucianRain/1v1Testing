@@ -43,6 +43,7 @@ const REVEAL_MS = 1600; // how long the opponent's played card stays up
 const STAGE_MS = 550; // gap between setup / heal / damage in the resolution animation
 const BANNER_MS = 1300; // how long the "Round N" banner stays up
 const PROJECTILE_MS = 950; // wagon projectile travel time
+const SNIPER_PROJECTILE_MS = 550; // sniper shot: smaller and faster than a wagon shell
 const EVENT_PAUSE_MS = 300; // non-projectile damage events (sudden death)
 const EVENT_GAP_MS = 150; // breather between damage events once one has landed
 const WRECK_LINE_MS = 380; // Wrecking Car's grapple line reaching the target
@@ -877,7 +878,7 @@ function engineBoxEl(side) {
 
 // Animates a small dot from `fromEl` to `toEl`, resolving once it "lands".
 // Skips the visual slide (but keeps the same timing) under reduced motion.
-function fireProjectile(fromEl, toEl) {
+function fireProjectile(fromEl, toEl, variant, durationMs) {
   return new Promise((resolve) => {
     if (!fromEl || !toEl) {
       resolve();
@@ -888,7 +889,7 @@ function fireProjectile(fromEl, toEl) {
     const toRect = toEl.getBoundingClientRect();
 
     const dot = document.createElement('div');
-    dot.className = 'projectile';
+    dot.className = variant ? `projectile ${variant}` : 'projectile';
     dot.style.left = `${fromRect.left + fromRect.width / 2}px`;
     dot.style.top = `${fromRect.top + fromRect.height / 2}px`;
     document.body.appendChild(dot);
@@ -897,7 +898,7 @@ function fireProjectile(fromEl, toEl) {
       dot.style.left = `${toRect.left + toRect.width / 2}px`;
       dot.style.top = `${toRect.top + toRect.height / 2}px`;
     } else {
-      dot.style.transition = `left ${PROJECTILE_MS}ms linear, top ${PROJECTILE_MS}ms linear`;
+      dot.style.transition = `left ${durationMs}ms linear, top ${durationMs}ms linear`;
       void dot.offsetWidth; // flush the starting position before animating
       dot.style.left = `${toRect.left + toRect.width / 2}px`;
       dot.style.top = `${toRect.top + toRect.height / 2}px`;
@@ -906,13 +907,14 @@ function fireProjectile(fromEl, toEl) {
     setTimeout(() => {
       dot.remove();
       resolve();
-    }, PROJECTILE_MS);
+    }, durationMs);
   });
 }
 
-// Replays a resolved damage stage hit by hit: a wagon's shot fires a
-// projectile and only reveals its damage once it lands; other sources just
-// get a short beat. Next car doesn't trigger until the current one lands.
+// Replays a resolved damage stage hit by hit: wagon and sniper shots fire a
+// projectile (sniper's smaller and faster) and only reveal their damage once
+// it lands; other sources just get a short beat. Next car doesn't trigger
+// until the current one lands.
 // `displayedHp` starts at each side's HP from before this damage stage
 // (matchState itself is already fully resolved to the *end* of the stage by
 // the time this runs) and is only advanced to an event's hpAfter once that
@@ -922,11 +924,13 @@ async function playDamageEvents(events, displayedHp) {
   const hpOverride = () => ({ my: displayedHp[myRole], opp: displayedHp[oppRole] });
 
   for (const event of events) {
-    if (event.kind === 'wagon') {
+    if (event.kind === 'wagon' || event.kind === 'sniper') {
       pulsingIds = new Set([event.attackerCarId]);
       renderTrains(hpOverride());
       pulsingIds = new Set();
-      await fireProjectile(carBoxEl(event.attackerSide, event.attackerCarId), engineBoxEl(event.targetSide));
+      const variant = event.kind === 'sniper' ? 'projectile-sniper' : null;
+      const duration = event.kind === 'sniper' ? SNIPER_PROJECTILE_MS : PROJECTILE_MS;
+      await fireProjectile(carBoxEl(event.attackerSide, event.attackerCarId), engineBoxEl(event.targetSide), variant, duration);
     } else {
       await wait(EVENT_PAUSE_MS);
     }

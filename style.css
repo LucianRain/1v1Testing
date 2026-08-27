@@ -393,6 +393,14 @@ input:focus {
   pointer-events: none;
 }
 
+.projectile.projectile-sniper {
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  background: radial-gradient(circle, #d7fff8, #5ac8be);
+  box-shadow: 0 0 10px 3px rgba(90, 200, 190, 0.75);
+}
+
 .targeting-arc {
   position: fixed;
   inset: 0;
