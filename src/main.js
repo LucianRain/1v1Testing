@@ -18,6 +18,13 @@ const btnResumeHost = document.getElementById('btn-resume-host');
 const resumeHostCodeEl = document.getElementById('resume-host-code');
 const btnQuickJoin = document.getElementById('btn-quick-join');
 const quickJoinCodeEl = document.getElementById('quick-join-code');
+const btnModeAuto = document.getElementById('btn-mode-auto');
+const btnModeInvite = document.getElementById('btn-mode-invite');
+const autoModePanel = document.getElementById('auto-mode-panel');
+const inviteModePanel = document.getElementById('invite-mode-panel');
+const btnAutoMatch = document.getElementById('btn-auto-match');
+const btnAutoCancel = document.getElementById('btn-auto-cancel');
+const autoStatusEl = document.getElementById('auto-status');
 
 const roundInfoEl = document.getElementById('round-info');
 const myHpEl = document.getElementById('my-hp');
@@ -46,6 +53,12 @@ const net = new PeerNetwork();
 
 const RESUME_ROOM_KEY = 'reroute-hosted-room'; // localStorage: a room I created but nobody had joined yet
 const ROOM_CODE_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
+const AUTO_LOBBY_ID = 'reroute-auto-lobby-v1'; // fixed, well-known id: autoMode pairs up whoever reaches it first
+const AUTO_JOIN_TIMEOUT_MS = 4000; // fail fast when trying to join - a real "nobody's here" is near-instant anyway
+const AUTO_RETRY_DELAY_MS = 3000; // how long to wait before retrying when the lobby's already full
+
+let matchMode = 'autoMode'; // 'autoMode' | 'inviteMode' - which panel is showing on the main menu
+let autoMatchGeneration = 0; // bumped to invalidate an in-flight autoMode search (cancel, or switching modes)
 
 const BOT_DELAY_MS = 700; // how long the bot "thinks" before committing
 const REVEAL_MS = 1600; // how long the opponent's played card stays up
@@ -1264,3 +1277,72 @@ btnJoin.addEventListener('click', () => {
 });
 
 btnQuickJoin.addEventListener('click', () => joinRoom(quickJoinCodeEl.textContent));
+
+function setMatchMode(mode) {
+  if (matchMode === mode) return;
+  resetConnectionUI(); // leaving either mode mid-attempt shouldn't leave a stale peer/connection behind
+  matchMode = mode;
+  btnModeAuto.classList.toggle('active', mode === 'autoMode');
+  btnModeInvite.classList.toggle('active', mode === 'inviteMode');
+  autoModePanel.classList.toggle('hidden', mode !== 'autoMode');
+  inviteModePanel.classList.toggle('hidden', mode !== 'inviteMode');
+}
+
+// Tears down whatever connection attempt is in flight (either mode) and
+// resets both panels back to their idle state - used both by autoMode's own
+// Cancel button and when switching modes out from under an attempt.
+function resetConnectionUI() {
+  autoMatchGeneration++; // invalidates any in-flight findAutoMatch() loop
+  net.destroy();
+
+  btnAutoMatch.disabled = false;
+  btnAutoMatch.classList.remove('hidden');
+  btnAutoCancel.classList.add('hidden');
+  autoStatusEl.textContent = '';
+
+  btnHost.disabled = false;
+  btnResumeHost.disabled = false;
+  hostCodeWrap.classList.add('hidden');
+  hostStatusEl.textContent = '';
+
+  btnJoin.disabled = false;
+  btnQuickJoin.disabled = false;
+  joinStatusEl.textContent = '';
+}
+
+// autoMode: try to join whoever's already waiting at the shared lobby id; if
+// nobody is, become the host of it myself. If the lobby's already got a
+// pair in it (this peer id rejects extra connections - see network.js), keep
+// retrying every few seconds until a spot opens up.
+async function findAutoMatch() {
+  const myGeneration = ++autoMatchGeneration;
+  btnAutoMatch.disabled = true;
+  btnAutoMatch.classList.add('hidden');
+  btnAutoCancel.classList.remove('hidden');
+
+  while (autoMatchGeneration === myGeneration) {
+    autoStatusEl.textContent = 'Looking for a match...';
+    try {
+      await net.join(AUTO_LOBBY_ID, AUTO_JOIN_TIMEOUT_MS);
+      return; // the 'connected' handler takes it from here
+    } catch (joinErr) {
+      if (autoMatchGeneration !== myGeneration) return;
+    }
+
+    try {
+      await net.host(AUTO_LOBBY_ID);
+      autoStatusEl.textContent = 'Waiting for an opponent to join...';
+      return; // hosting now - 'connected' fires once someone joins
+    } catch (hostErr) {
+      if (autoMatchGeneration !== myGeneration) return;
+    }
+
+    autoStatusEl.textContent = "A match is already in progress here - waiting for a spot...";
+    await wait(AUTO_RETRY_DELAY_MS);
+  }
+}
+
+btnModeAuto.addEventListener('click', () => setMatchMode('autoMode'));
+btnModeInvite.addEventListener('click', () => setMatchMode('inviteMode'));
+btnAutoMatch.addEventListener('click', findAutoMatch);
+btnAutoCancel.addEventListener('click', resetConnectionUI);

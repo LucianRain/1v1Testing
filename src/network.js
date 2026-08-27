@@ -19,6 +19,13 @@ export class PeerNetwork extends EventTarget {
       this.peer.on('open', (id) => resolve(id));
 
       this.peer.on('connection', (conn) => {
+        if (this.conn) {
+          // Already paired up on this id (relevant for autoMode's shared
+          // lobby id, where a 3rd person can reach a full match) - reject
+          // instead of stealing the slot from the existing pairing.
+          conn.close();
+          return;
+        }
         // 'connection' fires as soon as the DataConnection is being set up,
         // not once the channel can actually send/receive - binding (and
         // sending 'init') before conn.open is true means send() silently
@@ -35,7 +42,7 @@ export class PeerNetwork extends EventTarget {
     });
   }
 
-  join(hostId) {
+  join(hostId, timeoutMs = 12000) {
     this.role = 'client';
     return new Promise((resolve, reject) => {
       this.peer = new Peer();
@@ -56,7 +63,7 @@ export class PeerNetwork extends EventTarget {
 
         setTimeout(() => {
           if (!settled) reject(new Error('Connection timed out. Check the room code.'));
-        }, 12000);
+        }, timeoutMs);
       });
 
       this.peer.on('error', (err) => {
@@ -92,6 +99,8 @@ export class PeerNetwork extends EventTarget {
   destroy() {
     if (this.conn) this.conn.close();
     if (this.peer) this.peer.destroy();
+    this.conn = null;
+    this.peer = null;
   }
 }
 

@@ -87,6 +87,60 @@ html, body {
   margin: 0 0 12px;
 }
 
+.mode-toggle {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.mode-toggle .mode-btn {
+  flex: 1;
+  padding: 8px;
+  font-size: 13px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.mode-toggle .mode-btn:hover {
+  opacity: 1;
+}
+
+.mode-toggle .mode-btn.active {
+  background: linear-gradient(90deg, #4aa8ff, #6a5cff);
+  color: white;
+}
+
+.mode-hint {
+  font-size: 12px;
+  opacity: 0.5;
+  margin: 0 0 10px;
+}
+
+.invite-block {
+  margin-top: 16px;
+}
+
+.invite-block:first-child {
+  margin-top: 0;
+}
+
+.invite-block h3 {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  margin: 0 0 8px;
+}
+
+#btn-auto-cancel {
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+}
+
 input {
   width: 100%;
   padding: 12px;

@@ -11,12 +11,7 @@
     <div class="panel">
       <h1>Reroute</h1>
       <p class="subtitle">1v1 train duel &mdash; connects two browsers directly, no server needed.</p>
-      <p class="version" id="version">v25</p>
-
-      <div id="quick-actions" class="quick-actions hidden">
-        <button id="btn-resume-host" class="hidden">Resume hosting <span id="resume-host-code"></span></button>
-        <button id="btn-quick-join" class="hidden">Quick join <span id="quick-join-code"></span></button>
-      </div>
+      <p class="version" id="version">v26</p>
 
       <div class="menu-section">
         <h2>Practice</h2>
@@ -24,20 +19,42 @@
       </div>
 
       <div class="menu-section">
-        <h2>Host a game</h2>
-        <button id="btn-host">Create Room</button>
-        <div id="host-code-wrap" class="hidden">
-          <p>Share this code with your friend:</p>
-          <div class="code-box" id="host-code">------</div>
-          <p class="status" id="host-status">Waiting for opponent to join&hellip;</p>
+        <h2>Play online</h2>
+        <div class="mode-toggle">
+          <button id="btn-mode-auto" class="mode-btn active">Auto Match</button>
+          <button id="btn-mode-invite" class="mode-btn">Invite</button>
         </div>
-      </div>
 
-      <div class="menu-section">
-        <h2>Join a game</h2>
-        <input id="join-code-input" placeholder="Enter room code" autocomplete="off" spellcheck="false" />
-        <button id="btn-join">Join Room</button>
-        <p class="status" id="join-status"></p>
+        <div id="auto-mode-panel">
+          <p class="mode-hint">Instantly pairs you with whoever else hits Find Match. If a match is already full, you'll wait for a spot.</p>
+          <button id="btn-auto-match">Find Match</button>
+          <button id="btn-auto-cancel" class="hidden">Cancel</button>
+          <p class="status" id="auto-status"></p>
+        </div>
+
+        <div id="invite-mode-panel" class="hidden">
+          <div id="quick-actions" class="quick-actions hidden">
+            <button id="btn-resume-host" class="hidden">Resume hosting <span id="resume-host-code"></span></button>
+            <button id="btn-quick-join" class="hidden">Quick join <span id="quick-join-code"></span></button>
+          </div>
+
+          <div class="invite-block">
+            <h3>Host a game</h3>
+            <button id="btn-host">Create Room</button>
+            <div id="host-code-wrap" class="hidden">
+              <p>Share this code with your friend:</p>
+              <div class="code-box" id="host-code">------</div>
+              <p class="status" id="host-status">Waiting for opponent to join&hellip;</p>
+            </div>
+          </div>
+
+          <div class="invite-block">
+            <h3>Join a game</h3>
+            <input id="join-code-input" placeholder="Enter room code" autocomplete="off" spellcheck="false" />
+            <button id="btn-join">Join Room</button>
+            <p class="status" id="join-status"></p>
+          </div>
+        </div>
       </div>
     </div>
   </div>
