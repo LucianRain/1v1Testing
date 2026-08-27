@@ -248,6 +248,11 @@ input:focus {
   background: rgba(90, 170, 217, 0.18);
 }
 
+.car-box.repair {
+  border-color: rgba(90, 200, 130, 0.55);
+  background: rgba(90, 200, 130, 0.18);
+}
+
 .car-box.targetable {
   cursor: pointer;
   box-shadow: 0 0 0 2px rgba(255, 209, 90, 0.8);

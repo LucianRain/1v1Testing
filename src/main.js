@@ -64,6 +64,7 @@ let bannerTimeout = null;
 function pendingCarFor(cardId) {
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true };
   if (cardId === 'armor') return { type: 'armor', blockCharges: 1, pending: true };
+  if (cardId === 'repair') return { type: 'repair', healPerRound: 1, pending: true };
   return null;
 }
 
@@ -173,7 +174,10 @@ function renderTrain(el, cars, validIds) {
   cars.forEach((car) => {
     const box = document.createElement('div');
     box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}`;
-    const stat = car.type === 'wagon' ? `${car.dmgPerRound}/rd` : `${car.blockCharges}x block`;
+    let stat;
+    if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
+    else if (car.type === 'armor') stat = `${car.blockCharges}x block`;
+    else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
     if (validIds && car.id != null && validIds.has(car.id)) {
       box.classList.add('targetable');

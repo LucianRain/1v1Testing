@@ -5,7 +5,11 @@
 import { CARDS, validTargets } from './game.js';
 
 function carValue(car) {
-  return car.type === 'wagon' ? car.dmgPerRound * 3 : car.blockCharges * 2;
+  if (!car) return 0;
+  if (car.type === 'wagon') return car.dmgPerRound * 3;
+  if (car.type === 'armor') return car.blockCharges * 2;
+  if (car.type === 'repair') return car.healPerRound * 2.5;
+  return 0;
 }
 
 function bestTarget(cars, ids) {

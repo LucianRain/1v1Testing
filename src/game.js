@@ -10,7 +10,7 @@ export const CARDS = {
   claw: { name: 'Wrecking Claw', target: 'enemy_car', persistent: false, desc: "Destroy one of their coupled cars" },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
   armor: { name: 'Armor Car', target: null, persistent: true, desc: 'Couples on: blocks your next hit(s)' },
-  repair: { name: 'Repair Car', target: null, persistent: false, desc: 'Heal 3 HP' },
+  repair: { name: 'Repair Car', target: null, persistent: true, desc: 'Couples on: heals 1 HP every round' },
   overcharge: { name: 'Overcharge', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
   reinforce: { name: 'Reinforced Coupling', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars' },
 };
@@ -159,6 +159,7 @@ export function resolveSetup(state, plays) {
       if (car) {
         if (car.type === 'wagon') car.dmgPerRound += 1;
         if (car.type === 'armor') car.blockCharges += 1;
+        if (car.type === 'repair') car.healPerRound += 1;
         log.push(`${s} overcharges their ${car.type}`);
       }
     } else if (play.card === 'reinforce') {
@@ -181,18 +182,30 @@ export function resolveSetup(state, plays) {
       state.carCounter++;
       state[s].cars.push({ id: state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false });
       log.push(`${s} couples an Artillery Wagon`);
+    } else if (play.card === 'repair') {
+      state.carCounter++;
+      state[s].cars.push({ id: state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false });
+      log.push(`${s} couples a Repair Car`);
     }
   }
 
   return log;
 }
 
+// Every coupled, non-disabled Repair Car heals its healPerRound each round -
+// same trigger pattern as Artillery Wagon's damage, just healing instead.
 export function resolveHeal(state, plays) {
   const log = [];
   for (const s of SIDES) {
-    if (plays[s].card === 'repair') {
-      state[s].hp = Math.min(MAX_HP, state[s].hp + 3);
-      log.push(`${s} repairs 3 HP`);
+    let healAmount = 0;
+    for (const car of state[s].cars) {
+      if (car.type === 'repair' && !car.disabledThisRound) healAmount += car.healPerRound;
+    }
+    if (healAmount > 0) {
+      const before = state[s].hp;
+      state[s].hp = Math.min(MAX_HP, state[s].hp + healAmount);
+      const healed = state[s].hp - before;
+      if (healed > 0) log.push(`${s} heals ${healed} HP`);
     }
   }
   return log;
