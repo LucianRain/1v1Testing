@@ -84,6 +84,12 @@ let bannerTimeout = null;
 let turnTimeout = null; // fires endTurn() when the 15s turn clock runs out
 let turnTickInterval = null; // updates the visible countdown every tick
 let turnDeadline = null; // Date.now() timestamp the current turn auto-ends at
+let myResolvedClawId = null; // real id of my just-coupled Wrecking Car, once resolveSetup has run this round
+let oppResolvedClawId = null; // same, for the opponent's
+let myClawWrecked = false; // whether my claw's target was actually destroyed this round (its own wreck animation takes over the line)
+let oppClawWrecked = false;
+let myAimLineEl = null; // persistent SVG line elements for the "targeting" indicator, one per side
+let oppAimLineEl = null;
 
 function pendingCarFor(cardId) {
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true };
@@ -158,6 +164,12 @@ function startMatch(seed) {
   oppLastTrainWidth = null;
   inTriggerPhase = false;
   pulsingIds = new Set();
+  myResolvedClawId = null;
+  oppResolvedClawId = null;
+  myClawWrecked = false;
+  oppClawWrecked = false;
+  if (myAimLineEl) { myAimLineEl.remove(); myAimLineEl = null; }
+  if (oppAimLineEl) { oppAimLineEl.remove(); oppAimLineEl = null; }
   resolving = false;
   gameOver = false;
   render();
@@ -213,6 +225,68 @@ function renderTrains(hpOverride) {
   const oppHp = hpOverride ? hpOverride.opp : matchState[oppRole].hp;
   myLastTrainWidth = positionTrain(myTrainEl, myTrackEl, myHp, myLastTrainWidth);
   oppLastTrainWidth = positionTrain(oppTrainEl, oppTrackEl, oppHp, oppLastTrainWidth);
+
+  updateAimLines();
+}
+
+// A Wrecking Car's target: shown the instant it's aimed (staged, before End
+// Turn even) and kept on screen - through committing, waiting on the
+// opponent, and the setup-phase reveal - until the trigger phase starts. A
+// successful wreck hands the connection off to its own grapple-line/derail
+// animation instead of keeping this line drawn on top of it.
+function currentClawAim(side) {
+  if (inTriggerPhase) return null;
+  if (side === myRole) {
+    if (stagedPlay && stagedPlay.cardId === 'claw') return { targetCarId: stagedPlay.target, wrecked: false };
+    if (myPlay && myPlay.card === 'claw') return { targetCarId: myPlay.target, wrecked: myClawWrecked };
+    return null;
+  }
+  if (oppPlay && oppPlay.card === 'claw') return { targetCarId: oppPlay.target, wrecked: oppClawWrecked };
+  return null;
+}
+
+function clawAnchorEl(side) {
+  const resolvedId = side === myRole ? myResolvedClawId : oppResolvedClawId;
+  if (resolvedId != null) return carBoxEl(side, resolvedId);
+  const container = side === myRole ? myTrainEl : oppTrainEl;
+  return container.querySelector('.car-box.pending');
+}
+
+function updateAimLines() {
+  updateOneAimLine('my', myRole, oppRole);
+  updateOneAimLine('opp', oppRole, myRole);
+}
+
+function updateOneAimLine(which, side, targetSide) {
+  const aim = currentClawAim(side);
+  const fromEl = aim && !aim.wrecked ? clawAnchorEl(side) : null;
+  const toEl = fromEl ? carBoxEl(targetSide, aim.targetCarId) : null;
+
+  if (!fromEl || !toEl) {
+    const existing = which === 'my' ? myAimLineEl : oppAimLineEl;
+    if (existing) existing.remove();
+    if (which === 'my') myAimLineEl = null;
+    else oppAimLineEl = null;
+    return;
+  }
+
+  let svg = which === 'my' ? myAimLineEl : oppAimLineEl;
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'aim-line');
+    svg.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'line'));
+    document.body.appendChild(svg);
+    if (which === 'my') myAimLineEl = svg;
+    else oppAimLineEl = svg;
+  }
+
+  const fromRect = fromEl.getBoundingClientRect();
+  const toRect = toEl.getBoundingClientRect();
+  const line = svg.querySelector('line');
+  line.setAttribute('x1', fromRect.left + fromRect.width / 2);
+  line.setAttribute('y1', fromRect.top + fromRect.height / 2);
+  line.setAttribute('x2', toRect.left + toRect.width / 2);
+  line.setAttribute('y2', toRect.top + toRect.height / 2);
 }
 
 // Full HP: engine (rightmost) touches the track's right edge.
@@ -770,12 +844,36 @@ async function runResolution() {
   resolving = true;
 
   const plays = { [myRole]: myPlay, [oppRole]: oppPlay };
+  const beforeIds = {
+    [myRole]: new Set(matchState[myRole].cars.map((c) => c.id)),
+    [oppRole]: new Set(matchState[oppRole].cars.map((c) => c.id)),
+  };
 
   const setup = resolveSetup(matchState, plays); // fully resolved now, including any Wrecking Car destroys
   myPendingCar = null;
   myPendingInsertIndex = null;
   oppPendingCar = null;
   oppPendingInsertIndex = null;
+
+  // Pin down the real id of a Wrecking Car just coupled this round (it had
+  // none while only a preview), so its aim line can keep tracking it, and
+  // note whether it actually landed - a successful wreck's own animation
+  // takes over the line instead of this one continuing to draw it.
+  for (const side of [myRole, oppRole]) {
+    const newClaw =
+      plays[side].card === 'claw'
+        ? matchState[side].cars.find((c) => c.type === 'claw' && !beforeIds[side].has(c.id))
+        : null;
+    const resolvedId = newClaw ? newClaw.id : null;
+    const wrecked = resolvedId != null && setup.wrecks.some((w) => w.attackerCarId === resolvedId);
+    if (side === myRole) {
+      myResolvedClawId = resolvedId;
+      myClawWrecked = wrecked;
+    } else {
+      oppResolvedClawId = resolvedId;
+      oppClawWrecked = wrecked;
+    }
+  }
 
   // Don't reveal or animate anything from this round until the opponent's
   // "played X" popup has actually finished and cleared off screen.
@@ -981,6 +1079,8 @@ function finishRound(plays) {
     resolving = false;
     myPlay = null;
     oppPlay = null;
+    myResolvedClawId = null;
+    oppResolvedClawId = null;
     render();
     showGameOver(winner);
     return;
@@ -991,6 +1091,8 @@ function finishRound(plays) {
     resolving = false;
     myPlay = null;
     oppPlay = null;
+    myResolvedClawId = null;
+    oppResolvedClawId = null;
     render();
     startTurnTimer();
   }, BANNER_MS);

@@ -462,6 +462,23 @@ input:focus {
   pointer-events: none;
 }
 
+.aim-line {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 22;
+  pointer-events: none;
+}
+
+.aim-line line {
+  stroke: #be82e6;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 6 6;
+  opacity: 0.35;
+}
+
 .grapple-line line {
   stroke: #ff5a5a;
   stroke-width: 3;
