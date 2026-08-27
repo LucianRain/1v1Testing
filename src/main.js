@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, MAX_HP, createDeck, draw, redrawHand, ensurePlayable, deriveSeed, createMatchState, resolveRound, validTargets, checkWinner } from './game.js';
+import { CARDS, MAX_HP, createDeck, draw, redrawHand, ensurePlayable, deriveSeed, createMatchState, resolveSetup, resolveHeal, resolveDamage, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -31,11 +31,17 @@ const waitStatusEl = document.getElementById('wait-status');
 const cardRevealEl = document.getElementById('card-reveal');
 const revealTitleEl = document.getElementById('reveal-title');
 const revealDescEl = document.getElementById('reveal-desc');
+const roundBannerEl = document.getElementById('round-banner');
 const gameOverEl = document.getElementById('game-over');
 const gameOverTextEl = document.getElementById('game-over-text');
 const btnRestart = document.getElementById('btn-restart');
 
 const net = new PeerNetwork();
+
+const BOT_DELAY_MS = 700; // how long the bot "thinks" before committing
+const REVEAL_MS = 1600; // how long the opponent's played card stays up
+const STAGE_MS = 550; // gap between setup / heal / damage in the resolution animation
+const BANNER_MS = 1300; // how long the "Round N" banner stays up
 
 let myRole = null; // 'host' | 'client'
 let oppRole = null;
@@ -45,12 +51,21 @@ let myHand = [];
 let myPlay = null;
 let oppPlay = null;
 let gameOver = false;
+let resolving = false;
 let vsBot = false;
 let botDeck = null;
 let botHand = [];
 let pendingPlay = null; // { cardId, handIdx } while picking a target on the field
 let myPendingCar = null; // optimistic preview of a wagon/armor I just committed
+let oppPendingCar = null; // same, for the opponent's just-revealed play
 let revealTimeout = null;
+let bannerTimeout = null;
+
+function pendingCarFor(cardId) {
+  if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true };
+  if (cardId === 'armor') return { type: 'armor', blockCharges: 1, pending: true };
+  return null;
+}
 
 btnBot.addEventListener('click', () => {
   vsBot = true;
@@ -79,8 +94,7 @@ net.addEventListener('data', (e) => {
   if (msg.t === 'init') {
     startMatch(msg.seed);
   } else if (msg.t === 'play') {
-    oppPlay = { card: msg.card, target: msg.target };
-    tryResolve();
+    handleOppPlayKnown(msg.card, msg.target);
   }
 });
 
@@ -100,6 +114,8 @@ function startMatch(seed) {
   myPlay = null;
   oppPlay = null;
   myPendingCar = null;
+  oppPendingCar = null;
+  resolving = false;
   gameOver = false;
   render();
 }
@@ -132,9 +148,11 @@ function renderTrains() {
 
   const myCars = matchState[myRole].cars.slice();
   if (myPendingCar) myCars.push(myPendingCar);
+  const oppCars = matchState[oppRole].cars.slice();
+  if (oppPendingCar) oppCars.push(oppPendingCar);
 
   renderTrain(myTrainEl, myCars, myValidIds);
-  renderTrain(oppTrainEl, matchState[oppRole].cars, oppValidIds);
+  renderTrain(oppTrainEl, oppCars, oppValidIds);
 
   positionTrain(myTrainEl, myTrackEl, matchState[myRole].hp);
   positionTrain(oppTrainEl, oppTrackEl, matchState[oppRole].hp);
@@ -175,7 +193,8 @@ function renderHand() {
   const locked = !!myPlay || !!pendingPlay || gameOver;
   btnPass.disabled = locked;
   waitStatusEl.classList.toggle('hidden', !myPlay || gameOver);
-  waitStatusEl.textContent = vsBot ? 'Bot is thinking...' : 'Waiting for opponent...';
+  if (oppPlay) waitStatusEl.textContent = 'Resolving...';
+  else waitStatusEl.textContent = vsBot ? 'Bot is thinking...' : 'Waiting for opponent...';
 
   myHand.forEach((cardId, idx) => {
     const card = CARDS[cardId];
@@ -227,24 +246,20 @@ btnPass.addEventListener('click', () => {
     setTimeout(playBotTurn, BOT_DELAY_MS);
   } else {
     net.send({ t: 'play', card: null, target: null });
-    tryResolve();
+    runResolution();
   }
 });
-
-const BOT_DELAY_MS = 700;
 
 function playBotTurn() {
   const botChoice = chooseBotPlay(matchState, oppRole, botHand);
   botHand.splice(botHand.indexOf(botChoice.card), 1);
-  oppPlay = botChoice;
-  tryResolve();
+  handleOppPlayKnown(botChoice.card, botChoice.target);
 }
 
 function commitPlay(cardId, handIdx, target) {
   myHand.splice(handIdx, 1);
   myPlay = { card: cardId, target };
-  if (cardId === 'wagon') myPendingCar = { type: 'wagon', dmgPerRound: 1, pending: true };
-  if (cardId === 'armor') myPendingCar = { type: 'armor', blockCharges: 1, pending: true };
+  myPendingCar = pendingCarFor(cardId);
   targetAreaEl.classList.add('hidden');
   renderTrains();
   renderHand();
@@ -252,47 +267,91 @@ function commitPlay(cardId, handIdx, target) {
     setTimeout(playBotTurn, BOT_DELAY_MS);
   } else {
     net.send({ t: 'play', card: cardId, target });
-    tryResolve();
+    runResolution();
   }
 }
 
-function tryResolve() {
-  if (!myPlay || !oppPlay || gameOver) return;
-
-  const plays = { [myRole]: myPlay, [oppRole]: oppPlay };
-  const myCardPlayed = myPlay.card !== null;
-  const oppCardPlayed = oppPlay.card !== null;
-  const oppCardId = oppPlay.card;
-  resolveRound(matchState, plays);
-  if (myCardPlayed) myHand.push(draw(myDeck));
-  if (vsBot && oppCardPlayed) botHand.push(draw(botDeck));
-  myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
-  if (vsBot) botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
-  myPendingCar = null;
-  myPlay = null;
-  oppPlay = null;
-
-  showCardReveal(oppCardId);
-
-  const winner = checkWinner(matchState);
-  if (winner) {
-    gameOver = true;
-    render();
-    showGameOver(winner);
-    return;
-  }
-
+// Opponent's play is known (bot decided, or a networked message arrived):
+// show their new car instantly and reveal what they played, same as our own
+// turn, before the actual resolution animation runs.
+function handleOppPlayKnown(cardId, target) {
+  oppPlay = { card: cardId, target };
+  oppPendingCar = pendingCarFor(cardId);
   render();
+  if (cardId) {
+    showCardReveal(cardId);
+    setTimeout(runResolution, REVEAL_MS);
+  } else {
+    runResolution();
+  }
 }
 
 function showCardReveal(cardId) {
-  if (!cardId) return;
   const card = CARDS[cardId];
   revealTitleEl.textContent = card.name;
   revealDescEl.textContent = card.desc;
   cardRevealEl.classList.add('visible');
   clearTimeout(revealTimeout);
-  revealTimeout = setTimeout(() => cardRevealEl.classList.remove('visible'), 2200);
+  revealTimeout = setTimeout(() => cardRevealEl.classList.remove('visible'), REVEAL_MS);
+}
+
+// Runs once both plays are known: setup, then healing, then damage, each
+// applied and rendered in turn with a short pause so the player can follow
+// what happened, then a "Round N" banner before the next round unlocks.
+function runResolution() {
+  if (!myPlay || !oppPlay || gameOver || resolving) return;
+  resolving = true;
+
+  const plays = { [myRole]: myPlay, [oppRole]: oppPlay };
+
+  resolveSetup(matchState, plays);
+  myPendingCar = null;
+  oppPendingCar = null;
+  render();
+
+  setTimeout(() => {
+    resolveHeal(matchState, plays);
+    render();
+
+    setTimeout(() => {
+      resolveDamage(matchState, plays);
+      render();
+      finishRound(plays);
+    }, STAGE_MS);
+  }, STAGE_MS);
+}
+
+function finishRound(plays) {
+  if (plays[myRole].card !== null) myHand.push(draw(myDeck));
+  if (vsBot && plays[oppRole].card !== null) botHand.push(draw(botDeck));
+  myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
+  if (vsBot) botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
+
+  const winner = checkWinner(matchState);
+  if (winner) {
+    gameOver = true;
+    resolving = false;
+    myPlay = null;
+    oppPlay = null;
+    render();
+    showGameOver(winner);
+    return;
+  }
+
+  showRoundBanner(matchState.round);
+  setTimeout(() => {
+    resolving = false;
+    myPlay = null;
+    oppPlay = null;
+    render();
+  }, BANNER_MS);
+}
+
+function showRoundBanner(roundNum) {
+  roundBannerEl.textContent = `Round ${roundNum}`;
+  roundBannerEl.classList.add('visible');
+  clearTimeout(bannerTimeout);
+  bannerTimeout = setTimeout(() => roundBannerEl.classList.remove('visible'), BANNER_MS - 250);
 }
 
 function showGameOver(winner) {

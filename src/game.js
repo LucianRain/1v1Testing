@@ -125,17 +125,21 @@ export function validTargets(state, side, cardId) {
   return [];
 }
 
-// Advances the match by one round given both players' committed plays.
-// Mutates and returns `state`. Runs identically on both peers.
-export function resolveRound(state, plays) {
-  const sides = ['host', 'client'];
+const SIDES = ['host', 'client'];
+
+// Round resolution is split into three stages so the UI can animate each one
+// separately: setup (claw/sabotage/overcharge/reinforce + new cars coupling
+// on) resolves first, then healing, then damage. Each stage mutates `state`
+// in place and returns its own log lines; run identically on both peers.
+
+export function resolveSetup(state, plays) {
   const log = [];
 
-  for (const s of sides) for (const car of state[s].cars) car.disabledThisRound = false;
-  for (const s of sides) if (plays[s].card === null) log.push(`${s} passes`);
+  for (const s of SIDES) for (const car of state[s].cars) car.disabledThisRound = false;
+  for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
 
-  // Phase 1 - setup: claw / sabotage / overcharge / reinforce
-  for (const s of sides) {
+  // claw / sabotage / overcharge / reinforce
+  for (const s of SIDES) {
     const play = plays[s];
     const opp = otherSide(s);
     if (play.card === 'claw') {
@@ -166,13 +170,10 @@ export function resolveRound(state, plays) {
     }
   }
 
-  // Phase 2 - self resolution: repair heals now, new cars couple on
-  for (const s of sides) {
+  // new cars couple on (confirms whatever the UI already previewed)
+  for (const s of SIDES) {
     const play = plays[s];
-    if (play.card === 'repair') {
-      state[s].hp = Math.min(MAX_HP, state[s].hp + 3);
-      log.push(`${s} repairs 3 HP`);
-    } else if (play.card === 'armor') {
+    if (play.card === 'armor') {
       state.carCounter++;
       state[s].cars.push({ id: state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false });
       log.push(`${s} couples an Armor Car`);
@@ -183,8 +184,24 @@ export function resolveRound(state, plays) {
     }
   }
 
-  // Phase 3 - damage
-  for (const t of sides) {
+  return log;
+}
+
+export function resolveHeal(state, plays) {
+  const log = [];
+  for (const s of SIDES) {
+    if (plays[s].card === 'repair') {
+      state[s].hp = Math.min(MAX_HP, state[s].hp + 3);
+      log.push(`${s} repairs 3 HP`);
+    }
+  }
+  return log;
+}
+
+export function resolveDamage(state, plays) {
+  const log = [];
+
+  for (const t of SIDES) {
     const attacker = otherSide(t);
     const attackerPlay = plays[attacker];
     const hits = [];
@@ -230,8 +247,14 @@ export function resolveRound(state, plays) {
     log.push(`Sudden death: both trains take ${chip} damage`);
   }
 
-  state.log = log;
   state.round += 1;
+  return log;
+}
+
+// Convenience: run all three stages back to back, for tests/simulations that
+// don't care about the animated staging the UI does between them.
+export function resolveRound(state, plays) {
+  state.log = [...resolveSetup(state, plays), ...resolveHeal(state, plays), ...resolveDamage(state, plays)];
   return state;
 }
 
