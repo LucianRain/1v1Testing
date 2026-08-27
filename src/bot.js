@@ -7,6 +7,7 @@ import { CARDS, validTargets } from './game.js';
 function carValue(car) {
   if (!car) return 0;
   if (car.type === 'wagon') return car.dmgPerRound * 3;
+  if (car.type === 'sniper') return car.dmgPerRound * 3.5; // unblockable - a bit more worth removing than a wagon
   if (car.type === 'armor') return car.blockCharges * 2;
   if (car.type === 'repair') return car.healPerRound * 2.5;
   return 0;
@@ -35,6 +36,11 @@ function scorePlay(state, side, cardId) {
   switch (cardId) {
     case 'wagon':
       return { score: 5, target: null };
+    case 'sniper': {
+      // Worth more specifically when they have active armor to punch through.
+      const armorUp = state[opp].cars.some((c) => c.type === 'armor' && c.blockCharges > 0);
+      return { score: armorUp ? 6 : 4, target: null };
+    }
     case 'repair': {
       const missing = 10 - state[side].hp;
       return { score: 1 + missing * 0.6, target: null };

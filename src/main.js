@@ -76,6 +76,7 @@ let bannerTimeout = null;
 
 function pendingCarFor(cardId) {
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true };
+  if (cardId === 'sniper') return { type: 'sniper', dmgPerRound: 1, pending: true };
   if (cardId === 'armor') return { type: 'armor', blockCharges: 1, pending: true };
   if (cardId === 'repair') return { type: 'repair', healPerRound: 1, pending: true };
   if (cardId === 'claw') return { type: 'claw', pending: true };
@@ -234,6 +235,7 @@ function renderTrain(el, cars, validIds) {
     if (car.id != null) box.dataset.carId = car.id;
     let stat;
     if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
+    else if (car.type === 'sniper') stat = `${car.dmgPerRound}/rd · pierces`;
     else if (car.type === 'armor') stat = spent ? 'spent' : `${car.blockCharges}x block`;
     else if (car.type === 'claw') stat = awaitingPlacementAim || awaitingRefreshAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;

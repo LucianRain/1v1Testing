@@ -333,6 +333,11 @@ input:focus {
   background: rgba(190, 130, 230, 0.18);
 }
 
+.car-box.sniper {
+  border-color: rgba(90, 200, 190, 0.55);
+  background: rgba(90, 200, 190, 0.18);
+}
+
 .car-box.needs-aim {
   cursor: grab;
   touch-action: none;

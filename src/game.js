@@ -5,7 +5,8 @@ export const MAX_HP = 10;
 export const SUDDEN_DEATH_START_ROUND = 9;
 
 export const CARDS = {
-  wagon: { name: 'Artillery Wagon', target: null, persistent: true, desc: 'Couples on: 2 dmg now, 1/round after' },
+  wagon: { name: 'Artillery Wagon', target: null, persistent: true, desc: 'Couples on: 1 dmg every round' },
+  sniper: { name: 'Sniper Car', target: null, persistent: true, desc: 'Couples on: 1 dmg every round, ignores Armor Car' },
   claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, desc: 'Couples on, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
   armor: { name: 'Armor Car', target: null, persistent: true, desc: 'Couples on: blocks your next hit(s)' },
@@ -37,8 +38,9 @@ function shuffle(arr, rng) {
   return a;
 }
 
-// Two players draw from independently-shuffled copies of the same 8-card
-// deck, seeded off one shared match seed - fair, but nothing to card-count.
+// Two players draw from independently-shuffled copies of the same deck (one
+// of each card in CARDS), seeded off one shared match seed - fair, but
+// nothing to card-count.
 export function deriveSeed(masterSeed, role) {
   const salt = role === 'host' ? 0x9e3779b9 : 0x85ebca6b;
   return (masterSeed ^ salt) >>> 0;
@@ -137,7 +139,10 @@ export function validTargets(state, side, cardId) {
   if (card.target === 'own_car') {
     if (cardId === 'reinforce') return state[side].cars.filter((c) => !c.protected).map((c) => c.id);
     if (cardId === 'refresh') return state[side].cars.filter(isSpent).map((c) => c.id);
-    if (cardId === 'overcharge') return state[side].cars.filter((c) => c.type !== 'claw').map((c) => c.id);
+    if (cardId === 'overcharge') {
+      // Sniper Car doesn't scale - that's the trade-off for ignoring armor.
+      return state[side].cars.filter((c) => c.type !== 'claw' && c.type !== 'sniper').map((c) => c.id);
+    }
     return state[side].cars.map((c) => c.id);
   }
   return [];
@@ -217,6 +222,9 @@ export function resolveSetup(state, plays) {
     } else if (play.card === 'wagon') {
       car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false };
       log.push(`${s} couples an Artillery Wagon`);
+    } else if (play.card === 'sniper') {
+      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false };
+      log.push(`${s} couples a Sniper Car`);
     } else if (play.card === 'repair') {
       car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false };
       log.push(`${s} couples a Repair Car`);
@@ -282,10 +290,12 @@ export function resolveHeal(state, plays) {
 // and the target's hp immediately after) so the UI can replay the sequence
 // hit by hit - e.g. animating a wagon's projectile and only revealing the
 // damage once it "lands" - rather than just seeing the end result.
-function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId) {
+function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId, ignoresArmor = false) {
   if (amount <= 0) return;
 
-  const armorCar = state[targetSide].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && !c.disabledThisRound);
+  const armorCar = ignoresArmor
+    ? null
+    : state[targetSide].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && !c.disabledThisRound);
   let blocked = false;
   let blockedByCarId = null;
 
@@ -328,6 +338,8 @@ export function resolveDamage(state, plays) {
     for (const car of inTriggerOrder(state[attacker].cars)) {
       if (car.type === 'wagon' && !car.disabledThisRound) {
         applyHit(state, target, car.dmgPerRound, log, `${attacker}'s artillery wagon`, events, 'wagon', attacker, car.id);
+      } else if (car.type === 'sniper' && !car.disabledThisRound) {
+        applyHit(state, target, car.dmgPerRound, log, `${attacker}'s sniper car`, events, 'sniper', attacker, car.id, true);
       }
     }
   }
