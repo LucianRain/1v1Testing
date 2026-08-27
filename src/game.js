@@ -158,6 +158,7 @@ const SIDES = ['host', 'client'];
 
 export function resolveSetup(state, plays) {
   const log = [];
+  const wrecks = []; // { attackerSide, attackerCarId, targetSide, targetCarId, targetCarSnapshot, targetIndex }
 
   for (const s of SIDES) for (const car of state[s].cars) car.disabledThisRound = false;
   for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
@@ -199,8 +200,17 @@ export function resolveSetup(state, plays) {
           // as when it was first placed - it goes right back to spent.
           const enemyCar = findCar(state[opp].cars, play.refreshTarget);
           if (enemyCar && !enemyCar.protected) {
+            const targetIndex = state[opp].cars.indexOf(enemyCar);
             removeCar(state[opp].cars, enemyCar.id);
             log.push(`${s} refreshes their wrecking car, which destroys ${opp}'s ${enemyCar.type}`);
+            wrecks.push({
+              attackerSide: s,
+              attackerCarId: car.id,
+              targetSide: opp,
+              targetCarId: enemyCar.id,
+              targetCarSnapshot: { ...enemyCar },
+              targetIndex,
+            });
           } else {
             log.push(`${s} refreshes their wrecking car`);
           }
@@ -239,14 +249,23 @@ export function resolveSetup(state, plays) {
       const opp = otherSide(s);
       const target = findCar(state[opp].cars, play.target);
       if (target && !target.protected) {
+        const targetIndex = state[opp].cars.indexOf(target);
         removeCar(state[opp].cars, target.id);
         log.push(`${s}'s wrecking car destroys ${opp}'s ${target.type}`);
+        wrecks.push({
+          attackerSide: s,
+          attackerCarId: car.id,
+          targetSide: opp,
+          targetCarId: target.id,
+          targetCarSnapshot: { ...target },
+          targetIndex,
+        });
       }
       car.fired = true;
     }
   }
 
-  return log;
+  return { log, wrecks };
 }
 
 // Which player's train triggers first alternates every round, so neither
@@ -357,10 +376,10 @@ export function resolveDamage(state, plays) {
 // Convenience: run all three stages back to back, for tests/simulations that
 // don't care about the animated staging the UI does between them.
 export function resolveRound(state, plays) {
-  const setupLog = resolveSetup(state, plays);
+  const setup = resolveSetup(state, plays);
   const heal = resolveHeal(state, plays);
   const damage = resolveDamage(state, plays);
-  state.log = [...setupLog, ...heal.log, ...damage.log];
+  state.log = [...setup.log, ...heal.log, ...damage.log];
   return state;
 }
 

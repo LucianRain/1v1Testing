@@ -45,6 +45,8 @@ const BANNER_MS = 1300; // how long the "Round N" banner stays up
 const PROJECTILE_MS = 950; // wagon projectile travel time
 const EVENT_PAUSE_MS = 300; // non-projectile damage events (sudden death)
 const EVENT_GAP_MS = 150; // breather between damage events once one has landed
+const WRECK_LINE_MS = 380; // Wrecking Car's grapple line reaching the target
+const WRECK_PULL_MS = 900; // pull + derail + freeze + fade, one combined animation
 
 let myRole = null; // 'host' | 'client'
 let oppRole = null;
@@ -67,6 +69,7 @@ let dragState = null; // in-progress drag of a train-car hand card
 let targetDragState = null; // in-progress arc-targeting drag (Sabotage, or aiming a placed Wrecking Car)
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
 let refreshAimState = null; // { handIdx, carId } while reviving a spent Wrecking Car needs a fresh aim
+let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
 let inTriggerPhase = false;
@@ -140,6 +143,7 @@ function startMatch(seed) {
   oppPendingInsertIndex = null;
   awaitingAim = null;
   refreshAimState = null;
+  phantomWrecks = [];
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
   inTriggerPhase = false;
@@ -183,6 +187,13 @@ function renderTrains(hpOverride) {
   if (myPendingCar) insertAt(myCars, myPendingCar, myPendingInsertIndex);
   const oppCars = matchState[oppRole].cars.slice();
   if (oppPendingCar) insertAt(oppCars, oppPendingCar, oppPendingInsertIndex);
+
+  // Cars a Wrecking Car just destroyed are already gone from matchState, but
+  // still shown - about to derail - until their animation finishes.
+  for (const pw of phantomWrecks) {
+    if (pw.side === myRole) insertAt(myCars, pw.car, pw.index);
+    else if (pw.side === oppRole) insertAt(oppCars, pw.car, pw.index);
+  }
 
   renderTrain(myTrainEl, myCars, myValidIds);
   renderTrain(oppTrainEl, oppCars, oppValidIds);
@@ -641,35 +652,112 @@ function showCardReveal(cardId) {
 // Runs once both plays are known: setup, then healing, then damage, each
 // applied and rendered in turn with a short pause so the player can follow
 // what happened, then a "Round N" banner before the next round unlocks.
-function runResolution() {
+async function runResolution() {
   if (!myPlay || !oppPlay || gameOver || resolving) return;
   resolving = true;
 
   const plays = { [myRole]: myPlay, [oppRole]: oppPlay };
 
-  resolveSetup(matchState, plays);
+  const setup = resolveSetup(matchState, plays); // fully resolved now, including any Wrecking Car destroys
   myPendingCar = null;
   myPendingInsertIndex = null;
   oppPendingCar = null;
   oppPendingInsertIndex = null;
-  render();
 
-  setTimeout(() => {
-    inTriggerPhase = true;
-    const heal = resolveHeal(matchState, plays);
-    pulsingIds = new Set(heal.triggered);
+  if (setup.wrecks.length) {
+    await playWreckAnimations(setup.wrecks);
+  } else {
     render();
-    pulsingIds = new Set(); // consumed - don't let a later unrelated render replay it
+  }
+  await wait(STAGE_MS);
 
-    setTimeout(async () => {
-      const preDamageHp = { host: matchState.host.hp, client: matchState.client.hp };
-      const damage = resolveDamage(matchState, plays); // fully resolved now; revealed to the player hit by hit below
-      await playDamageEvents(damage.events, preDamageHp);
-      inTriggerPhase = false;
-      render();
-      finishRound(plays);
-    }, STAGE_MS);
-  }, STAGE_MS);
+  inTriggerPhase = true;
+  const heal = resolveHeal(matchState, plays);
+  pulsingIds = new Set(heal.triggered);
+  render();
+  pulsingIds = new Set(); // consumed - don't let a later unrelated render replay it
+  await wait(STAGE_MS);
+
+  const preDamageHp = { host: matchState.host.hp, client: matchState.client.hp };
+  const damage = resolveDamage(matchState, plays); // fully resolved now; revealed to the player hit by hit below
+  await playDamageEvents(damage.events, preDamageHp);
+  inTriggerPhase = false;
+  render();
+  finishRound(plays);
+}
+
+// Plays every Wrecking Car destroy from this round's setup phase (there can
+// be one from each side at once). The destroyed cars are already gone from
+// matchState, so they're temporarily shown again via phantomWrecks - a
+// grapple line reaches out to each, then it's pulled off, derails, freezes,
+// and fades, before the real (already-resolved) state finally renders.
+async function playWreckAnimations(wrecks) {
+  phantomWrecks = wrecks.map((w) => ({ side: w.targetSide, car: w.targetCarSnapshot, index: w.targetIndex }));
+  pulsingIds = new Set(wrecks.map((w) => w.attackerCarId));
+  renderTrains();
+  pulsingIds = new Set();
+
+  await Promise.all(wrecks.map(animateOneWreck));
+
+  phantomWrecks = [];
+  render();
+}
+
+async function animateOneWreck(wreck) {
+  const attackerEl = carBoxEl(wreck.attackerSide, wreck.attackerCarId);
+  const targetEl = carBoxEl(wreck.targetSide, wreck.targetCarId);
+  if (!attackerEl || !targetEl) return;
+
+  const fromRect = attackerEl.getBoundingClientRect();
+  const toRect = targetEl.getBoundingClientRect();
+
+  const grapple = createGrappleLine(fromRect, toRect);
+  document.body.appendChild(grapple.svg);
+  await growGrappleLine(grapple, WRECK_LINE_MS);
+
+  const dx = fromRect.left + fromRect.width / 2 - (toRect.left + toRect.width / 2);
+  const dy = fromRect.top + fromRect.height / 2 - (toRect.top + toRect.height / 2);
+  const len = Math.hypot(dx, dy) || 1;
+  targetEl.style.setProperty('--pull-x', `${(dx / len) * 22}px`);
+  targetEl.style.setProperty('--pull-y', `${(dy / len) * 22}px`);
+  targetEl.classList.add('wrecking');
+
+  await wait(WRECK_PULL_MS);
+  grapple.svg.remove();
+}
+
+function createGrappleLine(fromRect, toRect) {
+  const x1 = fromRect.left + fromRect.width / 2;
+  const y1 = fromRect.top + fromRect.height / 2;
+  const x2 = toRect.left + toRect.width / 2;
+  const y2 = toRect.top + toRect.height / 2;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'grapple-line');
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('x1', x1);
+  line.setAttribute('y1', y1);
+  line.setAttribute('x2', x2);
+  line.setAttribute('y2', y2);
+  const length = Math.hypot(x2 - x1, y2 - y1) || 1;
+  line.style.strokeDasharray = `${length}`;
+  line.style.strokeDashoffset = `${length}`;
+  svg.appendChild(line);
+  return { svg, line };
+}
+
+function growGrappleLine(grapple, durationMs) {
+  return new Promise((resolve) => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      grapple.line.style.strokeDashoffset = '0';
+      resolve();
+      return;
+    }
+    void grapple.line.getBoundingClientRect(); // flush the starting dash offset before animating
+    grapple.line.style.transition = `stroke-dashoffset ${durationMs}ms ease-out`;
+    grapple.line.style.strokeDashoffset = '0';
+    setTimeout(resolve, durationMs);
+  });
 }
 
 function wait(ms) {

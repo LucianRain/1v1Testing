@@ -191,6 +191,7 @@ input:focus {
   right: 0;
   bottom: 10px;
   height: 6px;
+  z-index: 0;
   border-top: 2px solid rgba(255, 255, 255, 0.3);
   border-bottom: 2px solid rgba(255, 255, 255, 0.3);
   background: repeating-linear-gradient(
@@ -204,6 +205,7 @@ input:focus {
   position: absolute;
   left: 0;
   bottom: 16px;
+  z-index: 1;
   display: flex;
   flex-wrap: nowrap;
   gap: 6px;
@@ -233,23 +235,24 @@ input:focus {
 .car-box::after {
   content: '';
   position: absolute;
-  bottom: -4px;
-  width: 6px;
-  height: 6px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #17171b;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.35);
   box-sizing: border-box;
+  z-index: 1;
 }
 
 .car-box::before {
-  left: 14%;
-  box-shadow: 9px 0 0 0 #17171b;
+  left: 12%;
+  box-shadow: 17px 0 0 0 #17171b;
 }
 
 .car-box::after {
-  right: 14%;
-  box-shadow: -9px 0 0 0 #17171b;
+  right: 12%;
+  box-shadow: -17px 0 0 0 #17171b;
 }
 
 .car-flags {
@@ -446,6 +449,43 @@ input:focus {
   right: -6px;
   height: 2px;
   transform: translateY(-50%);
+}
+
+.grapple-line {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 23;
+  pointer-events: none;
+}
+
+.grapple-line line {
+  stroke: #ff5a5a;
+  stroke-width: 3;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px rgba(255, 90, 90, 0.6));
+}
+
+.car-box.wrecking {
+  opacity: 0;
+  transition: opacity 900ms ease-in;
+  z-index: 5;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .car-box.wrecking {
+    animation: wreck-derail 900ms ease-in forwards;
+    transition: none;
+  }
+}
+
+@keyframes wreck-derail {
+  0% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  40% { transform: translate(var(--pull-x, -14px), var(--pull-y, 0px)) rotate(-10deg); opacity: 1; }
+  60% { transform: translate(var(--pull-x, -14px), calc(var(--pull-y, 0px) + 8px)) rotate(-28deg); opacity: 1; }
+  85% { transform: translate(var(--pull-x, -14px), calc(var(--pull-y, 0px) + 8px)) rotate(-28deg); opacity: 1; }
+  100% { transform: translate(var(--pull-x, -14px), calc(var(--pull-y, 0px) + 8px)) rotate(-28deg); opacity: 0; }
 }
 
 .center-strip {
