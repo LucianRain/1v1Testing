@@ -42,6 +42,9 @@ const BOT_DELAY_MS = 700; // how long the bot "thinks" before committing
 const REVEAL_MS = 1600; // how long the opponent's played card stays up
 const STAGE_MS = 550; // gap between setup / heal / damage in the resolution animation
 const BANNER_MS = 1300; // how long the "Round N" banner stays up
+const PROJECTILE_MS = 450; // wagon projectile travel time
+const EVENT_PAUSE_MS = 300; // non-projectile damage events (track break, DoT, sudden death)
+const EVENT_GAP_MS = 150; // breather between damage events once one has landed
 
 let myRole = null; // 'host' | 'client'
 let oppRole = null;
@@ -203,6 +206,7 @@ function renderTrain(el, cars, validIds) {
     const box = document.createElement('div');
     const pulse = car.id != null && pulsingIds.has(car.id);
     box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}`;
+    if (car.id != null) box.dataset.carId = car.id;
     let stat;
     if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
     else if (car.type === 'armor') stat = `${car.blockCharges}x block`;
@@ -349,15 +353,91 @@ function runResolution() {
     render();
     pulsingIds = new Set(); // consumed - don't let a later unrelated render replay it
 
-    setTimeout(() => {
-      const damage = resolveDamage(matchState, plays);
-      pulsingIds = new Set(damage.triggered);
-      render();
-      pulsingIds = new Set();
+    setTimeout(async () => {
+      const damage = resolveDamage(matchState, plays); // fully resolved now; revealed to the player hit by hit below
+      await playDamageEvents(damage.events);
       inTriggerPhase = false;
+      render();
       finishRound(plays);
     }, STAGE_MS);
   }, STAGE_MS);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function carBoxEl(side, carId) {
+  const container = side === myRole ? myTrainEl : oppTrainEl;
+  return container.querySelector(`[data-car-id="${carId}"]`);
+}
+
+function engineBoxEl(side) {
+  const container = side === myRole ? myTrainEl : oppTrainEl;
+  return container.querySelector('.car-box.engine');
+}
+
+// Animates a small dot from `fromEl` to `toEl`, resolving once it "lands".
+// Skips the visual slide (but keeps the same timing) under reduced motion.
+function fireProjectile(fromEl, toEl) {
+  return new Promise((resolve) => {
+    if (!fromEl || !toEl) {
+      resolve();
+      return;
+    }
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect = toEl.getBoundingClientRect();
+
+    const dot = document.createElement('div');
+    dot.className = 'projectile';
+    dot.style.left = `${fromRect.left + fromRect.width / 2}px`;
+    dot.style.top = `${fromRect.top + fromRect.height / 2}px`;
+    document.body.appendChild(dot);
+
+    if (reduceMotion) {
+      dot.style.left = `${toRect.left + toRect.width / 2}px`;
+      dot.style.top = `${toRect.top + toRect.height / 2}px`;
+    } else {
+      dot.style.transition = `left ${PROJECTILE_MS}ms linear, top ${PROJECTILE_MS}ms linear`;
+      void dot.offsetWidth; // flush the starting position before animating
+      dot.style.left = `${toRect.left + toRect.width / 2}px`;
+      dot.style.top = `${toRect.top + toRect.height / 2}px`;
+    }
+
+    setTimeout(() => {
+      dot.remove();
+      resolve();
+    }, PROJECTILE_MS);
+  });
+}
+
+// Replays a resolved damage stage hit by hit: a wagon's shot fires a
+// projectile and only reveals its damage once it lands; other sources just
+// get a short beat. Next car doesn't trigger until the current one lands.
+async function playDamageEvents(events) {
+  for (const event of events) {
+    if (event.kind === 'wagon') {
+      pulsingIds = new Set([event.attackerCarId]);
+      renderTrains();
+      pulsingIds = new Set();
+      await fireProjectile(carBoxEl(event.attackerSide, event.attackerCarId), engineBoxEl(event.targetSide));
+    } else {
+      await wait(EVENT_PAUSE_MS);
+    }
+
+    if (event.blocked) {
+      pulsingIds = new Set([event.blockedByCarId]);
+      renderTrains();
+      pulsingIds = new Set();
+    } else {
+      const hpEl = event.targetSide === myRole ? myHpEl : oppHpEl;
+      const fillEl = event.targetSide === myRole ? myHpFillEl : oppHpFillEl;
+      renderHp(hpEl, fillEl, event.hpAfter);
+    }
+
+    await wait(EVENT_GAP_MS);
+  }
 }
 
 function finishRound(plays) {

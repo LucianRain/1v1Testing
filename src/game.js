@@ -228,51 +228,68 @@ export function resolveHeal(state, plays) {
 }
 
 // A single hit against a target: an available armor car absorbs it (one
-// charge, falls off once spent), otherwise it lands as real damage.
-// `attackerCarId` (if any) and any armor car that blocks are added to
-// `triggered` so the UI can pulse whichever car actually did something.
-function applyHit(state, targetSide, amount, log, sourceLabel, triggered, attackerCarId) {
+// charge, falls off once spent), otherwise it lands as real damage. Records
+// a structured event (kind, source car, whether it was blocked and by what,
+// and the target's hp immediately after) so the UI can replay the sequence
+// hit by hit - e.g. animating a wagon's projectile and only revealing the
+// damage once it "lands" - rather than just seeing the end result.
+function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId) {
   if (amount <= 0) return;
-  if (attackerCarId != null) triggered.push(attackerCarId);
 
   const armorCar = state[targetSide].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && !c.disabledThisRound);
+  let blocked = false;
+  let blockedByCarId = null;
+
   if (armorCar) {
     armorCar.blockCharges--;
-    triggered.push(armorCar.id);
+    blocked = true;
+    blockedByCarId = armorCar.id;
     log.push(`${targetSide}'s armor car blocks ${sourceLabel}`);
     if (armorCar.blockCharges <= 0) removeCar(state[targetSide].cars, armorCar.id);
-    return;
+  } else {
+    state[targetSide].hp -= amount;
+    log.push(`${targetSide} takes ${amount} damage from ${sourceLabel}`);
   }
-  state[targetSide].hp -= amount;
-  log.push(`${targetSide} takes ${amount} damage from ${sourceLabel}`);
+
+  events.push({
+    kind,
+    attackerSide,
+    attackerCarId: attackerCarId ?? null,
+    targetSide,
+    amount,
+    blocked,
+    blockedByCarId,
+    hpAfter: state[targetSide].hp,
+  });
 }
 
 // Whole trains fire in the round's trigger order; within a train, any
 // leftover Track Break DoT resolves first, then coupled wagons in position
 // order, then a freshly-played Track Break. Each hit checks the target's
 // armor individually, in that same sequence - overrides the old
-// blocks-the-biggest-hit priority logic. Returns { log, triggered }.
+// blocks-the-biggest-hit priority logic. Returns { log, events } - events is
+// the ordered hit-by-hit trace described in applyHit, above.
 export function resolveDamage(state, plays) {
   const log = [];
-  const triggered = [];
+  const events = [];
 
   for (const attacker of triggerOrder(state)) {
     const target = otherSide(attacker);
     const attackerPlay = plays[attacker];
 
     if (state[target].pendingDot > 0) {
-      applyHit(state, target, state[target].pendingDot, log, `${attacker}'s lingering track break`, triggered, null);
+      applyHit(state, target, state[target].pendingDot, log, `${attacker}'s lingering track break`, events, 'trackbreak_dot', attacker, null);
       state[target].pendingDot = 0;
     }
 
     for (const car of inTriggerOrder(state[attacker].cars)) {
       if (car.type === 'wagon' && !car.disabledThisRound) {
-        applyHit(state, target, car.dmgPerRound, log, `${attacker}'s artillery wagon`, triggered, car.id);
+        applyHit(state, target, car.dmgPerRound, log, `${attacker}'s artillery wagon`, events, 'wagon', attacker, car.id);
       }
     }
 
     if (attackerPlay.card === 'track_break') {
-      applyHit(state, target, 2, log, `${attacker}'s track break`, triggered, null);
+      applyHit(state, target, 2, log, `${attacker}'s track break`, events, 'trackbreak', attacker, null);
       state[target].pendingDot += 1;
     }
   }
@@ -280,11 +297,11 @@ export function resolveDamage(state, plays) {
   // Sudden death: escalating chip damage once round 9+ is reached
   if (state.round >= SUDDEN_DEATH_START_ROUND) {
     const chip = state.round - (SUDDEN_DEATH_START_ROUND - 1);
-    for (const s of triggerOrder(state)) applyHit(state, s, chip, log, 'sudden death', triggered, null);
+    for (const s of triggerOrder(state)) applyHit(state, s, chip, log, 'sudden death', events, 'suddendeath', null, null);
   }
 
   state.round += 1;
-  return { log, triggered };
+  return { log, events };
 }
 
 // Convenience: run all three stages back to back, for tests/simulations that
