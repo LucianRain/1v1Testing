@@ -27,7 +27,6 @@ const targetAreaEl = document.getElementById('target-area');
 const targetListEl = document.getElementById('target-list');
 const targetCancelBtn = document.getElementById('target-cancel');
 const waitStatusEl = document.getElementById('wait-status');
-const logEl = document.getElementById('log');
 const gameOverEl = document.getElementById('game-over');
 const gameOverTextEl = document.getElementById('game-over-text');
 const btnRestart = document.getElementById('btn-restart');
@@ -94,7 +93,6 @@ function startMatch(seed) {
   myPlay = null;
   oppPlay = null;
   gameOver = false;
-  logEl.innerHTML = '';
   render();
 }
 
@@ -222,8 +220,6 @@ function tryResolve() {
   myPlay = null;
   oppPlay = null;
 
-  matchState.log.forEach((line) => appendLog(line));
-
   const winner = checkWinner(matchState);
   if (winner) {
     gameOver = true;
@@ -233,13 +229,6 @@ function tryResolve() {
   }
 
   render();
-}
-
-function appendLog(line) {
-  const p = document.createElement('p');
-  p.textContent = line;
-  logEl.appendChild(p);
-  logEl.scrollTop = logEl.scrollHeight;
 }
 
 function showGameOver(winner) {
