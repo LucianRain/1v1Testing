@@ -78,6 +78,7 @@ let oppLastTrainWidth = null;
 let inTriggerPhase = false;
 let pulsingIds = new Set(); // car ids to pulse on the next render, then cleared
 let revealTimeout = null;
+let revealDonePromise = Promise.resolve(); // resolves once the opponent's reveal-card popup has faded
 let bannerTimeout = null;
 let turnTimeout = null; // fires endTurn() when the 15s turn clock runs out
 let turnTickInterval = null; // updates the visible countdown every tick
@@ -748,7 +749,12 @@ function showCardReveal(cardId) {
   revealDescEl.textContent = card.desc;
   cardRevealEl.classList.add('visible');
   clearTimeout(revealTimeout);
-  revealTimeout = setTimeout(() => cardRevealEl.classList.remove('visible'), REVEAL_MS);
+  revealDonePromise = new Promise((resolve) => {
+    revealTimeout = setTimeout(() => {
+      cardRevealEl.classList.remove('visible');
+      resolve();
+    }, REVEAL_MS);
+  });
 }
 
 // Runs once both plays are known: setup, then healing, then damage, each
@@ -771,7 +777,9 @@ async function runResolution() {
   } else {
     render();
   }
-  await wait(STAGE_MS);
+  // Setup itself shows immediately - but don't start the trigger phase while
+  // the opponent's "played X" popup is still up on screen.
+  await Promise.all([wait(STAGE_MS), revealDonePromise]);
 
   inTriggerPhase = true;
   const heal = resolveHeal(matchState, plays);
