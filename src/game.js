@@ -5,7 +5,6 @@ export const MAX_HP = 10;
 export const SUDDEN_DEATH_START_ROUND = 9;
 
 export const CARDS = {
-  track_break: { name: 'Track Break', target: null, persistent: false, desc: '2 dmg now, 1 next round' },
   wagon: { name: 'Artillery Wagon', target: null, persistent: true, desc: 'Couples on: 2 dmg now, 1/round after' },
   claw: { name: 'Wrecking Claw', target: 'enemy_car', persistent: false, desc: "Destroy one of their coupled cars" },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
@@ -13,6 +12,7 @@ export const CARDS = {
   repair: { name: 'Repair Car', target: null, persistent: true, desc: 'Couples on: heals 1 HP every round' },
   overcharge: { name: 'Overcharge', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
   reinforce: { name: 'Reinforced Coupling', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars' },
+  refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Reactivate one of your spent cars' },
 };
 
 const CARD_IDS = Object.keys(CARDS);
@@ -94,8 +94,8 @@ export function createMatchState() {
   return {
     round: 1,
     carCounter: 0,
-    host: { hp: MAX_HP, cars: [], pendingDot: 0 },
-    client: { hp: MAX_HP, cars: [], pendingDot: 0 },
+    host: { hp: MAX_HP, cars: [] },
+    client: { hp: MAX_HP, cars: [] },
     log: [],
   };
 }
@@ -121,6 +121,12 @@ function insertCar(cars, car, index) {
   cars.splice(i, 0, car);
 }
 
+// A car that's used up whatever made it useful but is still coupled - right
+// now that's only an Armor Car with no charges left.
+export function isSpent(car) {
+  return car.type === 'armor' && car.blockCharges <= 0;
+}
+
 export function validTargets(state, side, cardId) {
   const card = CARDS[cardId];
   if (card.target === 'enemy_car') {
@@ -128,6 +134,7 @@ export function validTargets(state, side, cardId) {
   }
   if (card.target === 'own_car') {
     if (cardId === 'reinforce') return state[side].cars.filter((c) => !c.protected).map((c) => c.id);
+    if (cardId === 'refresh') return state[side].cars.filter(isSpent).map((c) => c.id);
     return state[side].cars.map((c) => c.id);
   }
   return [];
@@ -175,6 +182,12 @@ export function resolveSetup(state, plays) {
       if (car) {
         car.protected = true;
         log.push(`${s} reinforces their ${car.type}`);
+      }
+    } else if (play.card === 'refresh') {
+      const car = findCar(state[s].cars, play.target);
+      if (car && isSpent(car)) {
+        car.blockCharges = 1;
+        log.push(`${s} refreshes their ${car.type}`);
       }
     }
   }
@@ -273,10 +286,9 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
   });
 }
 
-// Whole trains fire in the round's trigger order; within a train, any
-// leftover Track Break DoT resolves first, then coupled wagons in position
-// order, then a freshly-played Track Break. Each hit checks the target's
-// armor individually, in that same sequence - overrides the old
+// Whole trains fire in the round's trigger order; within a train, coupled
+// wagons go in position order. Each hit checks the target's armor
+// individually, in that same sequence - overrides the old
 // blocks-the-biggest-hit priority logic. Returns { log, events } - events is
 // the ordered hit-by-hit trace described in applyHit, above.
 export function resolveDamage(state, plays) {
@@ -285,22 +297,11 @@ export function resolveDamage(state, plays) {
 
   for (const attacker of triggerOrder(state)) {
     const target = otherSide(attacker);
-    const attackerPlay = plays[attacker];
-
-    if (state[target].pendingDot > 0) {
-      applyHit(state, target, state[target].pendingDot, log, `${attacker}'s lingering track break`, events, 'trackbreak_dot', attacker, null);
-      state[target].pendingDot = 0;
-    }
 
     for (const car of inTriggerOrder(state[attacker].cars)) {
       if (car.type === 'wagon' && !car.disabledThisRound) {
         applyHit(state, target, car.dmgPerRound, log, `${attacker}'s artillery wagon`, events, 'wagon', attacker, car.id);
       }
-    }
-
-    if (attackerPlay.card === 'track_break') {
-      applyHit(state, target, 2, log, `${attacker}'s track break`, events, 'trackbreak', attacker, null);
-      state[target].pendingDot += 1;
     }
   }
 

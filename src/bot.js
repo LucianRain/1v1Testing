@@ -33,8 +33,6 @@ function scorePlay(state, side, cardId) {
   if (needsTarget && targets.length === 0) return { score: -Infinity, target: null };
 
   switch (cardId) {
-    case 'track_break':
-      return { score: 3, target: null };
     case 'wagon':
       return { score: 5, target: null };
     case 'repair': {
@@ -60,6 +58,10 @@ function scorePlay(state, side, cardId) {
     case 'reinforce': {
       const target = bestTarget(state[side].cars, targets);
       return { score: 2, target };
+    }
+    case 'refresh': {
+      const incoming = state[opp].cars.filter((c) => c.type === 'wagon').reduce((a, c) => a + c.dmgPerRound, 0);
+      return { score: 2 + incoming * 1.2, target: targets[0] };
     }
     default:
       return { score: -Infinity, target: null };
