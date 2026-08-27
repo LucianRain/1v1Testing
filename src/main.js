@@ -737,12 +737,8 @@ function handleOppPlayKnown(cardId, target, insertIndex, refreshTarget) {
   oppPendingCar = pendingCarFor(cardId);
   oppPendingInsertIndex = insertIndex;
   render();
-  if (cardId) {
-    showCardReveal(cardId);
-    setTimeout(runResolution, REVEAL_MS);
-  } else {
-    runResolution();
-  }
+  if (cardId) showCardReveal(cardId);
+  runResolution();
 }
 
 function showCardReveal(cardId) {
