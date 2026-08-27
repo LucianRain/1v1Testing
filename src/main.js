@@ -1,9 +1,11 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
 import { CARDS, createDeck, draw, deriveSeed, createMatchState, resolveRound, validTargets, checkWinner } from './game.js';
+import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
 const gameScreen = document.getElementById('game-screen');
 
+const btnBot = document.getElementById('btn-bot');
 const btnHost = document.getElementById('btn-host');
 const btnJoin = document.getElementById('btn-join');
 const hostCodeWrap = document.getElementById('host-code-wrap');
@@ -37,6 +39,18 @@ let myHand = [];
 let myPlay = null;
 let oppPlay = null;
 let gameOver = false;
+let vsBot = false;
+let botDeck = null;
+let botHand = [];
+
+btnBot.addEventListener('click', () => {
+  vsBot = true;
+  myRole = 'host';
+  oppRole = 'client';
+  menuOverlay.classList.add('hidden');
+  gameScreen.classList.remove('hidden');
+  startMatch(Math.floor(Math.random() * 2 ** 31));
+});
 
 net.addEventListener('connected', () => {
   menuOverlay.classList.add('hidden');
@@ -70,6 +84,10 @@ function startMatch(seed) {
   matchState = createMatchState();
   myDeck = createDeck(deriveSeed(seed, myRole));
   myHand = [draw(myDeck), draw(myDeck), draw(myDeck)];
+  if (vsBot) {
+    botDeck = createDeck(deriveSeed(seed, oppRole));
+    botHand = [draw(botDeck), draw(botDeck), draw(botDeck)];
+  }
   myPlay = null;
   oppPlay = null;
   gameOver = false;
@@ -147,7 +165,13 @@ targetCancelBtn.addEventListener('click', () => {
 function commitPlay(cardId, handIdx, target) {
   myHand.splice(handIdx, 1);
   myPlay = { card: cardId, target };
-  net.send({ t: 'play', card: cardId, target });
+  if (vsBot) {
+    const botChoice = chooseBotPlay(matchState, oppRole, botHand);
+    botHand.splice(botHand.indexOf(botChoice.card), 1);
+    oppPlay = botChoice;
+  } else {
+    net.send({ t: 'play', card: cardId, target });
+  }
   targetAreaEl.classList.add('hidden');
   renderHand();
   tryResolve();
@@ -159,6 +183,7 @@ function tryResolve() {
   const plays = { [myRole]: myPlay, [oppRole]: oppPlay };
   resolveRound(matchState, plays);
   myHand.push(draw(myDeck));
+  if (vsBot) botHand.push(draw(botDeck));
   myPlay = null;
   oppPlay = null;
 
