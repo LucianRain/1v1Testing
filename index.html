@@ -37,36 +37,35 @@
   </div>
 
   <div id="game-screen" class="hidden">
-    <p id="round-info">Round 1</p>
-
-    <div class="board">
-      <div class="side">
-        <h3>You</h3>
-        <p id="my-hp">You: 10 HP</p>
-        <p id="my-cars" class="cars">No coupled cars.</p>
-      </div>
-      <div class="side">
-        <h3>Opponent</h3>
-        <p id="opp-hp">Opponent: 10 HP</p>
-        <p id="opp-cars" class="cars">No coupled cars.</p>
-      </div>
+    <div class="half opp-half">
+      <p class="side-label">Opponent &middot; <span id="opp-hp">10</span> HP</p>
+      <div id="opp-train" class="train"></div>
     </div>
 
-    <div id="hand"></div>
-
-    <div id="target-area" class="hidden">
-      <p>Choose a target:</p>
-      <div id="target-list"></div>
-      <button id="target-cancel">Cancel</button>
+    <div class="center-strip">
+      <p id="round-info">Round 1</p>
+      <p id="wait-status" class="status hidden">Waiting for opponent...</p>
+      <div id="log"></div>
     </div>
 
-    <p id="wait-status" class="status hidden">Waiting for opponent...</p>
+    <div class="half my-half">
+      <div id="my-train" class="train"></div>
+      <p class="side-label">You &middot; <span id="my-hp">10</span> HP</p>
 
-    <div id="log"></div>
+      <div id="hand"></div>
+
+      <div id="target-area" class="hidden">
+        <p>Choose a target:</p>
+        <div id="target-list"></div>
+        <button id="target-cancel">Cancel</button>
+      </div>
+    </div>
 
     <div id="game-over" class="hidden">
-      <p id="game-over-text"></p>
-      <button id="btn-restart">Play Again</button>
+      <div class="panel">
+        <p id="game-over-text"></p>
+        <button id="btn-restart">Play Again</button>
+      </div>
     </div>
   </div>
 

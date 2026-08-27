@@ -16,9 +16,9 @@ const joinStatusEl = document.getElementById('join-status');
 
 const roundInfoEl = document.getElementById('round-info');
 const myHpEl = document.getElementById('my-hp');
-const myCarsEl = document.getElementById('my-cars');
+const myTrainEl = document.getElementById('my-train');
 const oppHpEl = document.getElementById('opp-hp');
-const oppCarsEl = document.getElementById('opp-cars');
+const oppTrainEl = document.getElementById('opp-train');
 const handEl = document.getElementById('hand');
 const targetAreaEl = document.getElementById('target-area');
 const targetListEl = document.getElementById('target-list');
@@ -97,22 +97,28 @@ function startMatch(seed) {
 
 function render() {
   roundInfoEl.textContent = `Round ${matchState.round}`;
-  myHpEl.textContent = `You: ${matchState[myRole].hp} HP`;
-  oppHpEl.textContent = `Opponent: ${matchState[oppRole].hp} HP`;
-  myCarsEl.textContent = carsSummary(matchState[myRole].cars);
-  oppCarsEl.textContent = carsSummary(matchState[oppRole].cars);
+  myHpEl.textContent = matchState[myRole].hp;
+  oppHpEl.textContent = matchState[oppRole].hp;
+  renderTrain(myTrainEl, matchState[myRole].cars);
+  renderTrain(oppTrainEl, matchState[oppRole].cars);
   renderHand();
 }
 
-function carsSummary(cars) {
-  if (!cars.length) return 'No coupled cars.';
-  return cars
-    .map((c) => {
-      const bits = [c.type === 'wagon' ? `${c.dmgPerRound} dmg/rd` : `${c.blockCharges} charge(s)`];
-      if (c.protected) bits.push('protected');
-      return `${c.type} (${bits.join(', ')})`;
-    })
-    .join(' · ');
+function renderTrain(el, cars) {
+  el.innerHTML = '';
+
+  const engine = document.createElement('div');
+  engine.className = 'car-box engine';
+  engine.textContent = 'ENGINE';
+  el.appendChild(engine);
+
+  cars.forEach((car) => {
+    const box = document.createElement('div');
+    box.className = `car-box ${car.type}`;
+    const stat = car.type === 'wagon' ? `${car.dmgPerRound}/rd` : `${car.blockCharges}x block`;
+    box.innerHTML = `<strong>${car.type.toUpperCase()}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
+    el.appendChild(box);
+  });
 }
 
 function renderHand() {
