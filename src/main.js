@@ -77,7 +77,7 @@ let myPendingInsertIndex = null; // where in my train that preview goes
 let oppPendingCar = null; // same, for the opponent's just-revealed play
 let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
-let targetDragState = null; // in-progress arc-targeting drag (Sabotage, or aiming a placed Wrecking Car)
+let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Overcharge/Reinforce, or aiming a placed Wrecking Car)
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
 let refreshAimState = null; // { handIdx, carId } while reviving a spent Wrecking Car needs a fresh aim
 let stagedPlay = null; // { cardId, handIdx, target, insertIndex, refreshTarget } - what End Turn submits; null = pass
@@ -470,11 +470,11 @@ function renderHand() {
       // A Wrecking Car (claw) then needs a second drag - see onCardDragEnd.
       btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startCardDrag(e, cardId, idx, btn));
-    } else if (cardId === 'sabotage') {
-      // Drag out an arcing targeting reticle at an enemy car instead of a
-      // two-step click.
+    } else if (cardId === 'sabotage' || cardId === 'overcharge' || cardId === 'reinforce') {
+      // Drag out an arcing targeting reticle at the target car (enemy for
+      // Sabotage, your own for Overcharge/Reinforce) instead of a two-step click.
       btn.classList.add('draggable');
-      btn.addEventListener('pointerdown', (e) => startSabotageDrag(e, cardId, idx, btn));
+      btn.addEventListener('pointerdown', (e) => startTargetedCardDrag(e, cardId, idx, btn));
     } else {
       btn.addEventListener('click', () => {
         if (needsTarget) {
@@ -652,7 +652,11 @@ function onTargetDragEnd(e) {
   onComplete(targetId);
 }
 
-function startSabotageDrag(e, cardId, handIdx, sourceBtn) {
+// Shared by any targeted, non-coupling card (Sabotage, Overcharge, Reinforced
+// Coupling): drag an arcing reticle out from the hand card and release over a
+// highlighted car - own or enemy, whichever validTargets() says this card
+// can hit - instead of a plain click-to-target.
+function startTargetedCardDrag(e, cardId, handIdx, sourceBtn) {
   if (sourceBtn.disabled || dragState || targetDragState) return;
   pendingPlay = { cardId, handIdx };
   renderTrains(); // safe: doesn't touch the hand DOM the pointer is captured on
