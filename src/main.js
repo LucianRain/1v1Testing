@@ -60,6 +60,8 @@ let myPendingCar = null; // optimistic preview of a wagon/armor I just committed
 let oppPendingCar = null; // same, for the opponent's just-revealed play
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
+let inTriggerPhase = false;
+let pulsingIds = new Set(); // car ids to pulse on the next render, then cleared
 let revealTimeout = null;
 let bannerTimeout = null;
 
@@ -120,13 +122,15 @@ function startMatch(seed) {
   oppPendingCar = null;
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
+  inTriggerPhase = false;
+  pulsingIds = new Set();
   resolving = false;
   gameOver = false;
   render();
 }
 
 function render() {
-  roundInfoEl.textContent = `Round ${matchState.round}`;
+  roundInfoEl.textContent = inTriggerPhase ? 'Trigger Phase' : `Round ${matchState.round}`;
   renderHp(myHpEl, myHpFillEl, matchState[myRole].hp);
   renderHp(oppHpEl, oppHpFillEl, matchState[oppRole].hp);
   renderTrains();
@@ -197,7 +201,8 @@ function renderTrain(el, cars, validIds) {
   // Cars trail behind the engine, which leads on the right - the train faces right.
   cars.forEach((car) => {
     const box = document.createElement('div');
-    box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}`;
+    const pulse = car.id != null && pulsingIds.has(car.id);
+    box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}`;
     let stat;
     if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
     else if (car.type === 'armor') stat = `${car.blockCharges}x block`;
@@ -338,12 +343,18 @@ function runResolution() {
   render();
 
   setTimeout(() => {
-    resolveHeal(matchState, plays);
+    inTriggerPhase = true;
+    const heal = resolveHeal(matchState, plays);
+    pulsingIds = new Set(heal.triggered);
     render();
+    pulsingIds = new Set(); // consumed - don't let a later unrelated render replay it
 
     setTimeout(() => {
-      resolveDamage(matchState, plays);
+      const damage = resolveDamage(matchState, plays);
+      pulsingIds = new Set(damage.triggered);
       render();
+      pulsingIds = new Set();
+      inTriggerPhase = false;
       finishRound(plays);
     }, STAGE_MS);
   }, STAGE_MS);

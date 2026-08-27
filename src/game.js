@@ -207,27 +207,38 @@ function inTriggerOrder(cars) {
 
 // Every coupled, non-disabled Repair Car heals its healPerRound, one car at
 // a time in position order; whole trains go in the round's trigger order.
+// Returns { log, triggered } - triggered is the car ids that fired, for the
+// UI to pulse.
 export function resolveHeal(state, plays) {
   const log = [];
+  const triggered = [];
   for (const s of triggerOrder(state)) {
     for (const car of inTriggerOrder(state[s].cars)) {
       if (car.type !== 'repair' || car.disabledThisRound || car.healPerRound <= 0) continue;
       const before = state[s].hp;
       state[s].hp = Math.min(MAX_HP, state[s].hp + car.healPerRound);
       const healed = state[s].hp - before;
-      if (healed > 0) log.push(`${s}'s repair car heals ${healed} HP`);
+      if (healed > 0) {
+        log.push(`${s}'s repair car heals ${healed} HP`);
+        triggered.push(car.id);
+      }
     }
   }
-  return log;
+  return { log, triggered };
 }
 
 // A single hit against a target: an available armor car absorbs it (one
 // charge, falls off once spent), otherwise it lands as real damage.
-function applyHit(state, targetSide, amount, log, sourceLabel) {
+// `attackerCarId` (if any) and any armor car that blocks are added to
+// `triggered` so the UI can pulse whichever car actually did something.
+function applyHit(state, targetSide, amount, log, sourceLabel, triggered, attackerCarId) {
   if (amount <= 0) return;
+  if (attackerCarId != null) triggered.push(attackerCarId);
+
   const armorCar = state[targetSide].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && !c.disabledThisRound);
   if (armorCar) {
     armorCar.blockCharges--;
+    triggered.push(armorCar.id);
     log.push(`${targetSide}'s armor car blocks ${sourceLabel}`);
     if (armorCar.blockCharges <= 0) removeCar(state[targetSide].cars, armorCar.id);
     return;
@@ -240,27 +251,28 @@ function applyHit(state, targetSide, amount, log, sourceLabel) {
 // leftover Track Break DoT resolves first, then coupled wagons in position
 // order, then a freshly-played Track Break. Each hit checks the target's
 // armor individually, in that same sequence - overrides the old
-// blocks-the-biggest-hit priority logic.
+// blocks-the-biggest-hit priority logic. Returns { log, triggered }.
 export function resolveDamage(state, plays) {
   const log = [];
+  const triggered = [];
 
   for (const attacker of triggerOrder(state)) {
     const target = otherSide(attacker);
     const attackerPlay = plays[attacker];
 
     if (state[target].pendingDot > 0) {
-      applyHit(state, target, state[target].pendingDot, log, `${attacker}'s lingering track break`);
+      applyHit(state, target, state[target].pendingDot, log, `${attacker}'s lingering track break`, triggered, null);
       state[target].pendingDot = 0;
     }
 
     for (const car of inTriggerOrder(state[attacker].cars)) {
       if (car.type === 'wagon' && !car.disabledThisRound) {
-        applyHit(state, target, car.dmgPerRound, log, `${attacker}'s artillery wagon`);
+        applyHit(state, target, car.dmgPerRound, log, `${attacker}'s artillery wagon`, triggered, car.id);
       }
     }
 
     if (attackerPlay.card === 'track_break') {
-      applyHit(state, target, 2, log, `${attacker}'s track break`);
+      applyHit(state, target, 2, log, `${attacker}'s track break`, triggered, null);
       state[target].pendingDot += 1;
     }
   }
@@ -268,17 +280,20 @@ export function resolveDamage(state, plays) {
   // Sudden death: escalating chip damage once round 9+ is reached
   if (state.round >= SUDDEN_DEATH_START_ROUND) {
     const chip = state.round - (SUDDEN_DEATH_START_ROUND - 1);
-    for (const s of triggerOrder(state)) applyHit(state, s, chip, log, 'sudden death');
+    for (const s of triggerOrder(state)) applyHit(state, s, chip, log, 'sudden death', triggered, null);
   }
 
   state.round += 1;
-  return log;
+  return { log, triggered };
 }
 
 // Convenience: run all three stages back to back, for tests/simulations that
 // don't care about the animated staging the UI does between them.
 export function resolveRound(state, plays) {
-  state.log = [...resolveSetup(state, plays), ...resolveHeal(state, plays), ...resolveDamage(state, plays)];
+  const setupLog = resolveSetup(state, plays);
+  const heal = resolveHeal(state, plays);
+  const damage = resolveDamage(state, plays);
+  state.log = [...setupLog, ...heal.log, ...damage.log];
   return state;
 }
 
