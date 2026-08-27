@@ -46,6 +46,14 @@ html, body {
 .subtitle {
   opacity: 0.65;
   font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.version {
+  opacity: 0.45;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
   margin: 0 0 24px;
 }
 
