@@ -178,8 +178,8 @@ input:focus {
 }
 
 .car-box {
-  min-width: 64px;
-  padding: 8px 10px;
+  width: max-content;
+  padding: 8px 12px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.25);
   background: rgba(255, 255, 255, 0.08);
@@ -189,6 +189,7 @@ input:focus {
   gap: 2px;
   font-size: 11px;
   text-align: center;
+  white-space: nowrap;
 }
 
 .car-box strong { font-size: 11px; letter-spacing: 0.04em; }

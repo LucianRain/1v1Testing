@@ -134,7 +134,7 @@ function renderTrain(el, cars, validIds) {
     const box = document.createElement('div');
     box.className = `car-box ${car.type}`;
     const stat = car.type === 'wagon' ? `${car.dmgPerRound}/rd` : `${car.blockCharges}x block`;
-    box.innerHTML = `<strong>${car.type.toUpperCase()}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
+    box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
     if (validIds && validIds.has(car.id)) {
       box.classList.add('targetable');
       box.addEventListener('click', () => chooseTarget(car.id));
