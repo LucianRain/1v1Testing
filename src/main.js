@@ -153,7 +153,7 @@ function renderHand() {
   const locked = !!myPlay || !!pendingPlay || gameOver;
   btnPass.disabled = locked;
   waitStatusEl.classList.toggle('hidden', !myPlay || gameOver);
-  waitStatusEl.textContent = 'Waiting for opponent...';
+  waitStatusEl.textContent = vsBot ? 'Bot is thinking...' : 'Waiting for opponent...';
 
   myHand.forEach((cardId, idx) => {
     const card = CARDS[cardId];
@@ -199,31 +199,36 @@ targetCancelBtn.addEventListener('click', () => {
 btnPass.addEventListener('click', () => {
   myHand = redrawHand(myDeck, myHand);
   myPlay = { card: null, target: null };
-  if (vsBot) {
-    const botChoice = chooseBotPlay(matchState, oppRole, botHand);
-    botHand.splice(botHand.indexOf(botChoice.card), 1);
-    oppPlay = botChoice;
-  } else {
-    net.send({ t: 'play', card: null, target: null });
-  }
   targetAreaEl.classList.add('hidden');
   renderHand();
-  tryResolve();
+  if (vsBot) {
+    setTimeout(playBotTurn, BOT_DELAY_MS);
+  } else {
+    net.send({ t: 'play', card: null, target: null });
+    tryResolve();
+  }
 });
+
+const BOT_DELAY_MS = 700;
+
+function playBotTurn() {
+  const botChoice = chooseBotPlay(matchState, oppRole, botHand);
+  botHand.splice(botHand.indexOf(botChoice.card), 1);
+  oppPlay = botChoice;
+  tryResolve();
+}
 
 function commitPlay(cardId, handIdx, target) {
   myHand.splice(handIdx, 1);
   myPlay = { card: cardId, target };
-  if (vsBot) {
-    const botChoice = chooseBotPlay(matchState, oppRole, botHand);
-    botHand.splice(botHand.indexOf(botChoice.card), 1);
-    oppPlay = botChoice;
-  } else {
-    net.send({ t: 'play', card: cardId, target });
-  }
   targetAreaEl.classList.add('hidden');
   renderHand();
-  tryResolve();
+  if (vsBot) {
+    setTimeout(playBotTurn, BOT_DELAY_MS);
+  } else {
+    net.send({ t: 'play', card: cardId, target });
+    tryResolve();
+  }
 }
 
 function tryResolve() {
