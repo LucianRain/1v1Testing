@@ -42,7 +42,7 @@ const BOT_DELAY_MS = 700; // how long the bot "thinks" before committing
 const REVEAL_MS = 1600; // how long the opponent's played card stays up
 const STAGE_MS = 550; // gap between setup / heal / damage in the resolution animation
 const BANNER_MS = 1300; // how long the "Round N" banner stays up
-const PROJECTILE_MS = 450; // wagon projectile travel time
+const PROJECTILE_MS = 950; // wagon projectile travel time
 const EVENT_PAUSE_MS = 300; // non-projectile damage events (track break, DoT, sudden death)
 const EVENT_GAP_MS = 150; // breather between damage events once one has landed
 
@@ -147,7 +147,11 @@ function renderHp(labelEl, fillEl, hp) {
   fillEl.classList.toggle('low', hp <= MAX_HP * 0.3);
 }
 
-function renderTrains() {
+// hpOverride, when given ({ my, opp }), positions the trains using those HP
+// values instead of matchState's live ones - used mid-damage-animation, where
+// matchState already holds the fully-resolved future state but the train on
+// the rails shouldn't move until the hit that caused it has actually landed.
+function renderTrains(hpOverride) {
   let myValidIds = null;
   let oppValidIds = null;
 
@@ -166,8 +170,10 @@ function renderTrains() {
   renderTrain(myTrainEl, myCars, myValidIds);
   renderTrain(oppTrainEl, oppCars, oppValidIds);
 
-  myLastTrainWidth = positionTrain(myTrainEl, myTrackEl, matchState[myRole].hp, myLastTrainWidth);
-  oppLastTrainWidth = positionTrain(oppTrainEl, oppTrackEl, matchState[oppRole].hp, oppLastTrainWidth);
+  const myHp = hpOverride ? hpOverride.my : matchState[myRole].hp;
+  const oppHp = hpOverride ? hpOverride.opp : matchState[oppRole].hp;
+  myLastTrainWidth = positionTrain(myTrainEl, myTrackEl, myHp, myLastTrainWidth);
+  oppLastTrainWidth = positionTrain(oppTrainEl, oppTrackEl, oppHp, oppLastTrainWidth);
 }
 
 // Full HP: engine (rightmost) touches the track's right edge.
@@ -354,8 +360,9 @@ function runResolution() {
     pulsingIds = new Set(); // consumed - don't let a later unrelated render replay it
 
     setTimeout(async () => {
+      const preDamageHp = { host: matchState.host.hp, client: matchState.client.hp };
       const damage = resolveDamage(matchState, plays); // fully resolved now; revealed to the player hit by hit below
-      await playDamageEvents(damage.events);
+      await playDamageEvents(damage.events, preDamageHp);
       inTriggerPhase = false;
       render();
       finishRound(plays);
@@ -415,26 +422,32 @@ function fireProjectile(fromEl, toEl) {
 // Replays a resolved damage stage hit by hit: a wagon's shot fires a
 // projectile and only reveals its damage once it lands; other sources just
 // get a short beat. Next car doesn't trigger until the current one lands.
-async function playDamageEvents(events) {
+// `displayedHp` starts at each side's HP from before this damage stage
+// (matchState itself is already fully resolved to the *end* of the stage by
+// the time this runs) and is only advanced to an event's hpAfter once that
+// event has actually landed - so neither the HP bar nor the train's position
+// on the rails moves early.
+async function playDamageEvents(events, displayedHp) {
+  const hpOverride = () => ({ my: displayedHp[myRole], opp: displayedHp[oppRole] });
+
   for (const event of events) {
     if (event.kind === 'wagon') {
       pulsingIds = new Set([event.attackerCarId]);
-      renderTrains();
+      renderTrains(hpOverride());
       pulsingIds = new Set();
       await fireProjectile(carBoxEl(event.attackerSide, event.attackerCarId), engineBoxEl(event.targetSide));
     } else {
       await wait(EVENT_PAUSE_MS);
     }
 
-    if (event.blocked) {
-      pulsingIds = new Set([event.blockedByCarId]);
-      renderTrains();
-      pulsingIds = new Set();
-    } else {
-      const hpEl = event.targetSide === myRole ? myHpEl : oppHpEl;
-      const fillEl = event.targetSide === myRole ? myHpFillEl : oppHpFillEl;
-      renderHp(hpEl, fillEl, event.hpAfter);
-    }
+    // Landed - now it's safe to reveal the result.
+    displayedHp[event.targetSide] = event.hpAfter;
+    if (event.blocked) pulsingIds = new Set([event.blockedByCarId]);
+    const hpEl = event.targetSide === myRole ? myHpEl : oppHpEl;
+    const fillEl = event.targetSide === myRole ? myHpFillEl : oppHpFillEl;
+    renderHp(hpEl, fillEl, event.hpAfter);
+    renderTrains(hpOverride());
+    pulsingIds = new Set();
 
     await wait(EVENT_GAP_MS);
   }
