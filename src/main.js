@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, createDeck, draw, deriveSeed, createMatchState, resolveRound, validTargets, checkWinner } from './game.js';
+import { CARDS, createDeck, draw, redrawHand, deriveSeed, createMatchState, resolveRound, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -20,6 +20,7 @@ const myTrainEl = document.getElementById('my-train');
 const oppHpEl = document.getElementById('opp-hp');
 const oppTrainEl = document.getElementById('opp-train');
 const handEl = document.getElementById('hand');
+const btnPass = document.getElementById('btn-pass');
 const targetAreaEl = document.getElementById('target-area');
 const targetListEl = document.getElementById('target-list');
 const targetCancelBtn = document.getElementById('target-cancel');
@@ -107,11 +108,7 @@ function render() {
 function renderTrain(el, cars) {
   el.innerHTML = '';
 
-  const engine = document.createElement('div');
-  engine.className = 'car-box engine';
-  engine.textContent = 'ENGINE';
-  el.appendChild(engine);
-
+  // Cars trail behind the engine, which leads on the right - the train faces right.
   cars.forEach((car) => {
     const box = document.createElement('div');
     box.className = `car-box ${car.type}`;
@@ -119,12 +116,18 @@ function renderTrain(el, cars) {
     box.innerHTML = `<strong>${car.type.toUpperCase()}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
     el.appendChild(box);
   });
+
+  const engine = document.createElement('div');
+  engine.className = 'car-box engine';
+  engine.textContent = 'ENGINE';
+  el.appendChild(engine);
 }
 
 function renderHand() {
   handEl.innerHTML = '';
   targetAreaEl.classList.add('hidden');
   const locked = !!myPlay || gameOver;
+  btnPass.disabled = locked;
   waitStatusEl.classList.toggle('hidden', !myPlay || gameOver);
   waitStatusEl.textContent = 'Waiting for opponent...';
 
@@ -168,6 +171,21 @@ targetCancelBtn.addEventListener('click', () => {
   targetAreaEl.classList.add('hidden');
 });
 
+btnPass.addEventListener('click', () => {
+  myHand = redrawHand(myDeck, myHand);
+  myPlay = { card: null, target: null };
+  if (vsBot) {
+    const botChoice = chooseBotPlay(matchState, oppRole, botHand);
+    botHand.splice(botHand.indexOf(botChoice.card), 1);
+    oppPlay = botChoice;
+  } else {
+    net.send({ t: 'play', card: null, target: null });
+  }
+  targetAreaEl.classList.add('hidden');
+  renderHand();
+  tryResolve();
+});
+
 function commitPlay(cardId, handIdx, target) {
   myHand.splice(handIdx, 1);
   myPlay = { card: cardId, target };
@@ -187,9 +205,11 @@ function tryResolve() {
   if (!myPlay || !oppPlay || gameOver) return;
 
   const plays = { [myRole]: myPlay, [oppRole]: oppPlay };
+  const myCardPlayed = myPlay.card !== null;
+  const oppCardPlayed = oppPlay.card !== null;
   resolveRound(matchState, plays);
-  myHand.push(draw(myDeck));
-  if (vsBot) botHand.push(draw(botDeck));
+  if (myCardPlayed) myHand.push(draw(myDeck));
+  if (vsBot && oppCardPlayed) botHand.push(draw(botDeck));
   myPlay = null;
   oppPlay = null;
 

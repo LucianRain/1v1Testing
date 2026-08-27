@@ -54,6 +54,14 @@ export function draw(deck) {
   return deck.pile.pop();
 }
 
+// Passing: shuffle the current hand back into the deck, then draw a fresh one.
+export function redrawHand(deck, hand, handSize = 3) {
+  deck.pile = shuffle(deck.pile.concat(hand), deck.rng);
+  const newHand = [];
+  for (let i = 0; i < handSize; i++) newHand.push(draw(deck));
+  return newHand;
+}
+
 export function createMatchState() {
   return {
     round: 1,
@@ -96,6 +104,7 @@ export function resolveRound(state, plays) {
   const log = [];
 
   for (const s of sides) for (const car of state[s].cars) car.disabledThisRound = false;
+  for (const s of sides) if (plays[s].card === null) log.push(`${s} passes`);
 
   // Phase 1 - setup: claw / sabotage / overcharge / reinforce
   for (const s of sides) {

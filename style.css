@@ -163,8 +163,21 @@ input:focus {
 .car-box span { opacity: 0.75; }
 
 .car-box.engine {
+  position: relative;
   background: rgba(255, 255, 255, 0.16);
   font-weight: 700;
+  margin-right: 10px;
+}
+
+.car-box.engine::after {
+  content: '';
+  position: absolute;
+  right: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 10px solid transparent;
+  border-bottom: 10px solid transparent;
+  border-left: 10px solid rgba(255, 255, 255, 0.16);
 }
 
 .car-box.wagon {
@@ -276,7 +289,18 @@ button:active {
   font-size: 15px;
 }
 
-#target-cancel, #btn-restart {
+#target-cancel, #btn-restart, #btn-pass {
   padding: 10px 16px;
   font-size: 14px;
+}
+
+#btn-pass {
+  margin-top: 2px;
+  opacity: 0.8;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+#btn-pass:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
