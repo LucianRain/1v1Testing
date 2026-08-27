@@ -211,6 +211,7 @@ input:focus {
 }
 
 .car-box {
+  position: relative;
   width: max-content;
   padding: 8px 12px;
   border-radius: 6px;
@@ -223,6 +224,49 @@ input:focus {
   font-size: 11px;
   text-align: center;
   white-space: nowrap;
+}
+
+/* Two axles per car (2 wheels each, 4 visible - the other 4 would be on the
+   far side in 3D). Faked with box-shadow so each pseudo-element draws its
+   whole axle in one go. */
+.car-box::before,
+.car-box::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #17171b;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-sizing: border-box;
+}
+
+.car-box::before {
+  left: 14%;
+  box-shadow: 9px 0 0 0 #17171b;
+}
+
+.car-box::after {
+  right: 14%;
+  box-shadow: -9px 0 0 0 #17171b;
+}
+
+.overcharge-flag {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #1a1a1f;
+  background: #ffd15c;
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .car-box strong { font-size: 11px; letter-spacing: 0.04em; }

@@ -238,6 +238,12 @@ function renderTrain(el, cars, validIds) {
     else if (car.type === 'claw') stat = awaitingPlacementAim || awaitingRefreshAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
+    if (car.overcharged) {
+      const flag = document.createElement('div');
+      flag.className = 'overcharge-flag';
+      flag.textContent = 'Overcharged';
+      box.appendChild(flag);
+    }
     if (validIds && car.id != null && validIds.has(car.id)) {
       box.classList.add('targetable');
       box.addEventListener('click', () => chooseTarget(car.id));

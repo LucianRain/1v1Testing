@@ -137,6 +137,7 @@ export function validTargets(state, side, cardId) {
   if (card.target === 'own_car') {
     if (cardId === 'reinforce') return state[side].cars.filter((c) => !c.protected).map((c) => c.id);
     if (cardId === 'refresh') return state[side].cars.filter(isSpent).map((c) => c.id);
+    if (cardId === 'overcharge') return state[side].cars.filter((c) => c.type !== 'claw').map((c) => c.id);
     return state[side].cars.map((c) => c.id);
   }
   return [];
@@ -173,6 +174,7 @@ export function resolveSetup(state, plays) {
         if (car.type === 'wagon') car.dmgPerRound += 1;
         if (car.type === 'armor') car.blockCharges += 1;
         if (car.type === 'repair') car.healPerRound += 1;
+        car.overcharged = true;
         log.push(`${s} overcharges their ${car.type}`);
       }
     } else if (play.card === 'reinforce') {
