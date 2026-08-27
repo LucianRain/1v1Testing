@@ -77,6 +77,7 @@ let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
 let inTriggerPhase = false;
 let pulsingIds = new Set(); // car ids to pulse on the next render, then cleared
+let blockRevealOverride = null; // { carId, displayCharges } - an Armor Car mid-block keeps showing its pre-hit charge count until the projectile lands
 let revealTimeout = null;
 let revealDonePromise = Promise.resolve(); // resolves once the opponent's reveal-card popup has faded
 let bannerTimeout = null;
@@ -249,7 +250,11 @@ function renderTrain(el, cars, validIds) {
   cars.forEach((car) => {
     const box = document.createElement('div');
     const pulse = car.id != null && pulsingIds.has(car.id);
-    const spent = (car.type === 'armor' && car.blockCharges <= 0) || (car.type === 'claw' && car.fired);
+    const displayBlockCharges =
+      car.type === 'armor' && blockRevealOverride && car.id === blockRevealOverride.carId
+        ? blockRevealOverride.displayCharges
+        : car.blockCharges;
+    const spent = (car.type === 'armor' && displayBlockCharges <= 0) || (car.type === 'claw' && car.fired);
     const awaitingPlacementAim = car.pending && car.needsAim;
     const awaitingRefreshAim = refreshAimState && car.id === refreshAimState.carId;
     box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}${spent ? ' spent' : ''}`;
@@ -257,7 +262,7 @@ function renderTrain(el, cars, validIds) {
     let stat;
     if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
     else if (car.type === 'sniper') stat = `${car.dmgPerRound}/rd · pierces`;
-    else if (car.type === 'armor') stat = spent ? 'spent' : `${car.blockCharges}x block`;
+    else if (car.type === 'armor') stat = spent ? 'spent' : `${displayBlockCharges}x block`;
     else if (car.type === 'claw') stat = awaitingPlacementAim || awaitingRefreshAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
@@ -932,6 +937,11 @@ async function playDamageEvents(events, displayedHp) {
   const hpOverride = () => ({ my: displayedHp[myRole], opp: displayedHp[oppRole] });
 
   for (const event of events) {
+    if (event.blocked) {
+      const blockerCar = matchState[event.targetSide].cars.find((c) => c.id === event.blockedByCarId);
+      if (blockerCar) blockRevealOverride = { carId: blockerCar.id, displayCharges: blockerCar.blockCharges + 1 };
+    }
+
     if (event.kind === 'wagon' || event.kind === 'sniper') {
       pulsingIds = new Set([event.attackerCarId]);
       renderTrains(hpOverride());
@@ -944,6 +954,7 @@ async function playDamageEvents(events, displayedHp) {
     }
 
     // Landed - now it's safe to reveal the result.
+    blockRevealOverride = null;
     displayedHp[event.targetSide] = event.hpAfter;
     if (event.blocked) pulsingIds = new Set([event.blockedByCarId]);
     const hpEl = event.targetSide === myRole ? myHpEl : oppHpEl;
