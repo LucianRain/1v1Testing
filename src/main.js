@@ -26,6 +26,9 @@ const btnPass = document.getElementById('btn-pass');
 const targetAreaEl = document.getElementById('target-area');
 const targetCancelBtn = document.getElementById('target-cancel');
 const waitStatusEl = document.getElementById('wait-status');
+const cardRevealEl = document.getElementById('card-reveal');
+const revealTitleEl = document.getElementById('reveal-title');
+const revealDescEl = document.getElementById('reveal-desc');
 const gameOverEl = document.getElementById('game-over');
 const gameOverTextEl = document.getElementById('game-over-text');
 const btnRestart = document.getElementById('btn-restart');
@@ -44,6 +47,7 @@ let vsBot = false;
 let botDeck = null;
 let botHand = [];
 let pendingPlay = null; // { cardId, handIdx } while picking a target on the field
+let revealTimeout = null;
 
 btnBot.addEventListener('click', () => {
   vsBot = true;
@@ -237,11 +241,14 @@ function tryResolve() {
   const plays = { [myRole]: myPlay, [oppRole]: oppPlay };
   const myCardPlayed = myPlay.card !== null;
   const oppCardPlayed = oppPlay.card !== null;
+  const oppCardId = oppPlay.card;
   resolveRound(matchState, plays);
   if (myCardPlayed) myHand.push(draw(myDeck));
   if (vsBot && oppCardPlayed) botHand.push(draw(botDeck));
   myPlay = null;
   oppPlay = null;
+
+  showCardReveal(oppCardId);
 
   const winner = checkWinner(matchState);
   if (winner) {
@@ -252,6 +259,16 @@ function tryResolve() {
   }
 
   render();
+}
+
+function showCardReveal(cardId) {
+  if (!cardId) return;
+  const card = CARDS[cardId];
+  revealTitleEl.textContent = card.name;
+  revealDescEl.textContent = card.desc;
+  cardRevealEl.classList.add('visible');
+  clearTimeout(revealTimeout);
+  revealTimeout = setTimeout(() => cardRevealEl.classList.remove('visible'), 2200);
 }
 
 function showGameOver(winner) {
