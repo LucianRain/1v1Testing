@@ -19,7 +19,13 @@ export class PeerNetwork extends EventTarget {
       this.peer.on('open', (id) => resolve(id));
 
       this.peer.on('connection', (conn) => {
-        this._bindConnection(conn);
+        // 'connection' fires as soon as the DataConnection is being set up,
+        // not once the channel can actually send/receive - binding (and
+        // sending 'init') before conn.open is true means send() silently
+        // drops it, leaving the joiner stuck with no match ever started.
+        conn.on('open', () => {
+          this._bindConnection(conn);
+        });
       });
 
       this.peer.on('error', (err) => {
