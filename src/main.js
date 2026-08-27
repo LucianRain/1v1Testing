@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, MAX_HP, createDeck, draw, redrawHand, ensurePlayable, deriveSeed, createMatchState, resolveSetup, resolveHeal, resolveDamage, validTargets, checkWinner } from './game.js';
+import { CARDS, MAX_HP, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, resolveSetup, resolveHeal, resolveDamage, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -13,6 +13,11 @@ const hostCodeEl = document.getElementById('host-code');
 const hostStatusEl = document.getElementById('host-status');
 const joinCodeInput = document.getElementById('join-code-input');
 const joinStatusEl = document.getElementById('join-status');
+const quickActionsEl = document.getElementById('quick-actions');
+const btnResumeHost = document.getElementById('btn-resume-host');
+const resumeHostCodeEl = document.getElementById('resume-host-code');
+const btnQuickJoin = document.getElementById('btn-quick-join');
+const quickJoinCodeEl = document.getElementById('quick-join-code');
 
 const roundInfoEl = document.getElementById('round-info');
 const myHpEl = document.getElementById('my-hp');
@@ -37,6 +42,9 @@ const gameOverTextEl = document.getElementById('game-over-text');
 const btnRestart = document.getElementById('btn-restart');
 
 const net = new PeerNetwork();
+
+const RESUME_ROOM_KEY = 'reroute-hosted-room'; // localStorage: a room I created but nobody had joined yet
+const ROOM_CODE_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
 
 const BOT_DELAY_MS = 700; // how long the bot "thinks" before committing
 const REVEAL_MS = 1600; // how long the opponent's played card stays up
@@ -115,6 +123,7 @@ btnBot.addEventListener('click', () => {
 });
 
 net.addEventListener('connected', () => {
+  localStorage.removeItem(RESUME_ROOM_KEY); // a real match is starting now - this room's no longer "just waiting"
   menuOverlay.classList.add('hidden');
   gameScreen.classList.remove('hidden');
   myRole = net.role;
@@ -145,10 +154,12 @@ function startMatch(seed) {
   clearTurnTimer();
   matchState = createMatchState();
   myDeck = createDeck(deriveSeed(seed, myRole));
-  myHand = ensurePlayable(matchState, myRole, myDeck, [draw(myDeck), draw(myDeck), draw(myDeck)]);
+  myHand = ensureWeapon(myDeck, [draw(myDeck), draw(myDeck), draw(myDeck)]);
+  myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
   if (vsBot) {
     botDeck = createDeck(deriveSeed(seed, oppRole));
-    botHand = ensurePlayable(matchState, oppRole, botDeck, [draw(botDeck), draw(botDeck), draw(botDeck)]);
+    botHand = ensureWeapon(botDeck, [draw(botDeck), draw(botDeck), draw(botDeck)]);
+    botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
   }
   myPlay = null;
   oppPlay = null;
@@ -1118,35 +1129,78 @@ function showGameOver(winner) {
 
 btnRestart.addEventListener('click', () => location.reload());
 
-btnHost.addEventListener('click', async () => {
+async function hostRoom(existingId) {
   btnHost.disabled = true;
-  hostStatusEl.textContent = 'Creating room...';
+  btnResumeHost.disabled = true;
+  hostStatusEl.textContent = existingId ? 'Resuming room...' : 'Creating room...';
   try {
-    const id = await net.host();
+    const id = await net.host(existingId);
+    localStorage.setItem(RESUME_ROOM_KEY, id);
     hostCodeWrap.classList.remove('hidden');
     hostCodeEl.textContent = formatRoomCode(id);
     hostStatusEl.textContent = 'Waiting for opponent to join...';
     hostCodeEl.addEventListener('click', () => {
       navigator.clipboard?.writeText(formatRoomCode(id)).catch(() => {});
     });
+    setQuickActionVisibility(btnResumeHost, false);
   } catch (err) {
+    // A stale resumed id can fail (e.g. long expired) - fall back to a fresh room next time.
+    if (existingId) localStorage.removeItem(RESUME_ROOM_KEY);
     hostStatusEl.textContent = `Error: ${err.message || err}`;
     btnHost.disabled = false;
+    btnResumeHost.disabled = false;
   }
-});
+}
 
-btnJoin.addEventListener('click', async () => {
+async function joinRoom(code) {
+  btnJoin.disabled = true;
+  btnQuickJoin.disabled = true;
+  joinStatusEl.textContent = 'Connecting...';
+  try {
+    await net.join(toPeerId(code));
+    setQuickActionVisibility(btnQuickJoin, false);
+  } catch (err) {
+    joinStatusEl.textContent = `Error: ${err.message || err}`;
+    btnJoin.disabled = false;
+    btnQuickJoin.disabled = false;
+  }
+}
+
+function setQuickActionVisibility(btn, visible) {
+  btn.classList.toggle('hidden', !visible);
+  const anyVisible = !btnResumeHost.classList.contains('hidden') || !btnQuickJoin.classList.contains('hidden');
+  quickActionsEl.classList.toggle('hidden', !anyVisible);
+}
+
+// A room I created but nobody joined yet, from before a page reload - offer
+// to bring the exact same code back up instead of forcing a brand new one.
+const resumeId = localStorage.getItem(RESUME_ROOM_KEY);
+if (resumeId) {
+  resumeHostCodeEl.textContent = formatRoomCode(resumeId);
+  setQuickActionVisibility(btnResumeHost, true);
+}
+
+// Best-effort: if a room code is sitting in the clipboard (a friend just
+// shared one), offer a one-click join. Silently does nothing if the browser
+// blocks clipboard reads without a prior gesture, or there's no permission.
+navigator.clipboard?.readText().then((text) => {
+  const code = text.trim().toUpperCase().replace(/^ROOM-/, '');
+  if (ROOM_CODE_RE.test(code)) {
+    quickJoinCodeEl.textContent = code;
+    setQuickActionVisibility(btnQuickJoin, true);
+  }
+}).catch(() => {});
+
+btnHost.addEventListener('click', () => hostRoom());
+btnResumeHost.addEventListener('click', () => hostRoom(resumeId));
+
+btnJoin.addEventListener('click', () => {
   const code = joinCodeInput.value.trim();
   if (!code) {
     joinStatusEl.textContent = 'Enter a room code first.';
     return;
   }
-  btnJoin.disabled = true;
-  joinStatusEl.textContent = 'Connecting...';
-  try {
-    await net.join(toPeerId(code));
-  } catch (err) {
-    joinStatusEl.textContent = `Error: ${err.message || err}`;
-    btnJoin.disabled = false;
-  }
+  joinRoom(code);
 });
+
+btnQuickJoin.addEventListener('click', () => joinRoom(quickJoinCodeEl.textContent));

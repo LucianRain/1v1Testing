@@ -5,8 +5,8 @@ export const MAX_HP = 10;
 export const SUDDEN_DEATH_START_ROUND = 9;
 
 export const CARDS = {
-  wagon: { name: 'Artillery Wagon', target: null, persistent: true, desc: 'Couples on: 1 dmg every round' },
-  sniper: { name: 'Sniper Car', target: null, persistent: true, desc: 'Couples on: 1 dmg every round, ignores Armor Car' },
+  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, desc: 'Couples on: 1 dmg every round' },
+  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, desc: 'Couples on: 1 dmg every round, ignores Armor Car' },
   claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, desc: 'Couples on, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
   armor: { name: 'Armor Car', target: null, persistent: true, desc: 'Couples on: blocks your next hit(s)' },
@@ -89,6 +89,28 @@ export function ensurePlayable(state, side, deck, hand) {
 
   const newHand = hand.slice();
   newHand[newHand.findIndex((c) => !isPlayable(state, side, c))] = found;
+  return newHand;
+}
+
+// Guarantees the opening hand has some way to actually deal damage: if it
+// has no weapon (Artillery Wagon / Sniper Car), keep drawing until one turns
+// up and swap it in for the first card. Draws that don't help go back to the
+// bottom of the pile rather than being lost.
+export function ensureWeapon(deck, hand) {
+  if (hand.some((c) => CARDS[c].weapon)) return hand;
+
+  const rejected = [];
+  let found = null;
+  for (let i = 0; i < 20 && found === null; i++) {
+    const candidate = draw(deck);
+    if (CARDS[candidate].weapon) found = candidate;
+    else rejected.push(candidate);
+  }
+  deck.pile = rejected.concat(deck.pile);
+  if (found === null) return hand;
+
+  const newHand = hand.slice();
+  newHand[0] = found;
   return newHand;
 }
 

@@ -11,10 +11,10 @@ export class PeerNetwork extends EventTarget {
     this.role = null; // 'host' | 'client'
   }
 
-  host() {
+  host(existingId) {
     this.role = 'host';
     return new Promise((resolve, reject) => {
-      this.peer = new Peer(shortId());
+      this.peer = new Peer(existingId || shortId());
 
       this.peer.on('open', (id) => resolve(id));
 
