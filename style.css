@@ -13,119 +13,19 @@ html, body {
   color: #eaeaf2;
 }
 
-#game-canvas {
-  position: fixed;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
 .hidden {
   display: none !important;
 }
 
-/* ---------- HUD ---------- */
+/* ---------- Overlays / panel ---------- */
 
-#hud {
-  position: fixed;
-  top: 16px;
-  left: 16px;
-  right: 16px;
-  display: flex;
-  justify-content: space-between;
-  pointer-events: none;
-  z-index: 5;
-}
-
-.healthbar-wrap {
-  width: 260px;
-}
-
-#hp-them-wrap {
-  text-align: right;
-}
-
-.healthbar-label {
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  opacity: 0.7;
-  margin-bottom: 4px;
-}
-
-.healthbar {
-  width: 100%;
-  height: 16px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.healthbar-fill {
-  height: 100%;
-  width: 100%;
-  background: linear-gradient(90deg, #33d17a, #7bed9f);
-  transition: width 0.15s ease-out;
-}
-
-#hp-me-wrap .healthbar-fill {
-  background: linear-gradient(90deg, #4aa8ff, #7bc8ff);
-}
-
-#hp-them-wrap .healthbar-fill {
-  margin-left: auto;
-  background: linear-gradient(90deg, #ff5566, #ff8899);
-}
-
-/* ---------- Crosshair ---------- */
-
-#crosshair {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  width: 16px;
-  height: 16px;
-  margin: -8px 0 0 -8px;
-  pointer-events: none;
-  z-index: 5;
-}
-
-#crosshair::before,
-#crosshair::after {
-  content: '';
-  position: absolute;
-  background: rgba(255, 255, 255, 0.8);
-}
-
-#crosshair::before {
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-}
-
-#crosshair::after {
-  top: 50%;
-  left: 0;
-  right: 0;
-  height: 2px;
-  margin-top: -1px;
-}
-
-/* ---------- Overlays ---------- */
-
-#menu-overlay,
-#gameover-overlay,
-#conn-lost-overlay {
+#menu-overlay {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: radial-gradient(circle at 50% 30%, rgba(40, 40, 70, 0.55), rgba(5, 5, 10, 0.85));
-  z-index: 10;
 }
 
 .panel {
@@ -164,27 +64,6 @@ html, body {
   margin: 0 0 12px;
 }
 
-button {
-  width: 100%;
-  padding: 12px;
-  border-radius: 8px;
-  border: none;
-  background: linear-gradient(90deg, #4aa8ff, #6a5cff);
-  color: white;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: transform 0.1s ease, opacity 0.1s ease;
-}
-
-button:hover {
-  opacity: 0.9;
-}
-
-button:active {
-  transform: scale(0.98);
-}
-
 input {
   width: 100%;
   padding: 12px;
@@ -221,8 +100,68 @@ input:focus {
   min-height: 18px;
 }
 
-.controls-hint {
-  font-size: 12px;
+/* ---------- Counter screen ---------- */
+
+#counter-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+}
+
+.conn-status {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   opacity: 0.5;
-  margin: 20px 0 0;
+}
+
+.counter-value {
+  font-size: min(28vw, 220px);
+  font-weight: 800;
+  line-height: 1;
+  background: linear-gradient(135deg, #4aa8ff, #6a5cff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  border-radius: 8px;
+  border: none;
+  background: linear-gradient(90deg, #4aa8ff, #6a5cff);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.1s ease, opacity 0.1s ease;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+button:active {
+  transform: scale(0.96);
+}
+
+.panel button {
+  width: 100%;
+  padding: 12px;
+  font-size: 15px;
+}
+
+#btn-increment {
+  width: min(50vw, 240px);
+  height: min(50vw, 240px);
+  border-radius: 50%;
+  font-size: 42px;
+  box-shadow: 0 10px 40px rgba(74, 168, 255, 0.35);
 }

@@ -1,47 +1,34 @@
-# 1v1 Duel
+# Shared Counter (P2P test)
 
-A tiny top-down arena shooter built with [Three.js](https://threejs.org/), made to test a peer-to-peer 1v1 game hosted entirely on GitHub Pages — no backend, no build step.
+A minimal test of the peer-to-peer networking layer: one shared counter, either player's button press increments it for both. Static site, no backend, deploys straight to GitHub Pages.
 
 ## How it works
 
-- **Rendering:** Three.js, loaded via an [import map](index.html) straight from a CDN (unpkg). No bundler needed.
-- **Networking:** [PeerJS](https://peerjs.com/), which uses its free public cloud server only to help two browsers find each other (signaling). Once connected, all game data flows directly peer-to-peer over WebRTC. One player hosts (gets a room code), the other joins with that code.
-- **Hosting:** Just static files (`index.html`, `style.css`, `src/`). GitHub Pages serves it as-is.
+- **Networking:** [PeerJS](https://peerjs.com/), which uses its free public cloud server only to help two browsers find each other (signaling). Once connected, all data flows directly peer-to-peer over WebRTC ([src/network.js](src/network.js)). One player hosts (gets a room code), the other joins with that code.
+- **State:** each press increments the local count immediately and sends `{t: 'inc'}` to the other peer, who applies the same +1 on receipt. Since increments always commute, both sides converge without needing a central authority.
+- **Hosting:** just static files (`index.html`, `style.css`, `src/`). GitHub Pages serves it as-is.
 
 ## Play locally
 
-You need a local web server (import maps / ES modules don't load from `file://`). From this folder:
+You need a local web server (ES modules don't load from `file://`):
 
 ```bash
 python3 -m http.server 8000
-# then open http://localhost:8000 in two browser tabs/windows (or two machines)
+# open http://localhost:8000 in two browser tabs/windows (or two machines)
 ```
 
-One tab clicks **Create Room** and shares the code; the other pastes it into **Join Room**.
-
-## Controls
-
-- `WASD` — move
-- Mouse — aim (your character faces the cursor)
-- Left click — shoot
-- First to 0 HP loses
+One tab clicks **Create Room** and shares the code; the other pastes it into **Join Room**. Either side's `+1` button increments the count on both.
 
 ## Deploying to GitHub Pages
 
-1. Create a new GitHub repo and push this folder to it (`main` branch, root).
-2. In the repo, go to **Settings → Pages**.
-3. Under **Build and deployment**, set **Source** to `Deploy from a branch`, branch `main`, folder `/ (root)`.
-4. Save — GitHub gives you a URL like `https://<username>.github.io/<repo>/` within a minute or two.
-5. Send that link to your friend, both open it, one hosts and one joins.
+1. Push this repo to GitHub (`main` branch, root).
+2. **Settings → Pages → Build and deployment → Source:** `Deploy from a branch`, branch `main`, folder `/ (root)`.
+3. GitHub gives you a URL like `https://<username>.github.io/<repo>/` within a minute or two.
 
 No secrets, API keys, or server config required.
 
-## Notes / known limitations
+## `game/` — the 3D duel prototype
 
-This is a quick test scaffold, not a polished game:
+The [game/](game/) folder holds an earlier, fuller prototype built on the same networking layer: a Three.js top-down 1v1 arena shooter (WASD move, mouse aim/shoot, health bars, hit detection). It's parked here for later rather than deployed — see [game/README.md](game/README.md) for details on running it.
 
-- Hit detection is simple sphere-vs-circle, receiver-authoritative (each player's own client decides whether they got hit, then reports HP to the other side) — fine for a casual match between friends, not cheat-proof.
-- No reconnect/resume — if the connection drops, both players need to reload and re-host/join.
-- PeerJS's public broker occasionally has connection hiccups; if "Join Room" times out, have the host re-create the room and try again.
-
-Feel free to swap in your own arena layout, player models, or game rules in [src/main.js](src/main.js) — the movement/shooting/networking scaffolding is meant to be a starting point.
+To bring it back as the active site, swap its contents up to the repo root (or point GitHub Pages at `/game` instead of `/ (root)`).

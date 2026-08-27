@@ -3,37 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>1v1 Duel</title>
+  <title>Shared Counter</title>
   <link rel="stylesheet" href="style.css" />
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-      }
-    }
-  </script>
 </head>
 <body>
-  <canvas id="game-canvas"></canvas>
-
-  <div id="hud">
-    <div class="healthbar-wrap" id="hp-me-wrap">
-      <div class="healthbar-label">YOU</div>
-      <div class="healthbar"><div class="healthbar-fill" id="hp-me"></div></div>
-    </div>
-    <div class="healthbar-wrap" id="hp-them-wrap">
-      <div class="healthbar-label">OPPONENT</div>
-      <div class="healthbar"><div class="healthbar-fill" id="hp-them"></div></div>
-    </div>
-  </div>
-
-  <div id="crosshair"></div>
-
   <div id="menu-overlay">
     <div class="panel">
-      <h1>1v1 Duel</h1>
-      <p class="subtitle">Three.js test arena &mdash; connects peer-to-peer, no server needed.</p>
+      <h1>Shared Counter</h1>
+      <p class="subtitle">P2P test &mdash; connects two browsers directly, no server needed.</p>
 
       <div class="menu-section">
         <h2>Host a game</h2>
@@ -51,26 +28,13 @@
         <button id="btn-join">Join Room</button>
         <p class="status" id="join-status"></p>
       </div>
-
-      <p class="controls-hint">
-        <strong>Controls:</strong> WASD to move, mouse to aim, click to shoot
-      </p>
     </div>
   </div>
 
-  <div id="gameover-overlay" class="hidden">
-    <div class="panel">
-      <h1 id="gameover-title">You Win</h1>
-      <button id="btn-rematch">Play Again</button>
-    </div>
-  </div>
-
-  <div id="conn-lost-overlay" class="hidden">
-    <div class="panel">
-      <h1>Connection Lost</h1>
-      <p class="subtitle">Your opponent disconnected.</p>
-      <button id="btn-reload">Back to Menu</button>
-    </div>
+  <div id="counter-screen" class="hidden">
+    <p class="conn-status" id="conn-status">Connected</p>
+    <div class="counter-value" id="counter-value">0</div>
+    <button id="btn-increment">+1</button>
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>

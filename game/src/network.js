@@ -35,7 +35,7 @@ export class PeerNetwork extends EventTarget {
       this.peer = new Peer();
 
       this.peer.on('open', () => {
-        const conn = this.peer.connect(hostId, { reliable: true });
+        const conn = this.peer.connect(hostId, { reliable: false });
         let settled = false;
 
         conn.on('open', () => {
@@ -96,14 +96,14 @@ function shortId() {
   for (let i = 0; i < 6; i++) {
     out += chars[Math.floor(Math.random() * chars.length)];
   }
-  return `room-${out}`;
+  return `duel-${out}`;
 }
 
 export function formatRoomCode(peerId) {
-  return peerId.replace('room-', '');
+  return peerId.replace('duel-', '');
 }
 
 export function toPeerId(roomCode) {
   const trimmed = roomCode.trim().toUpperCase();
-  return trimmed.startsWith('ROOM-') ? `room-${trimmed.slice(5)}` : `room-${trimmed}`;
+  return trimmed.startsWith('DUEL-') ? `duel-${trimmed.slice(5)}` : `duel-${trimmed}`;
 }
