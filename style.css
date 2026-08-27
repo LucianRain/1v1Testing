@@ -252,21 +252,44 @@ input:focus {
   box-shadow: -9px 0 0 0 #17171b;
 }
 
-.overcharge-flag {
+.car-flags {
   position: absolute;
   top: -14px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.car-flag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.car-flag.overcharge {
   font-size: 8px;
   font-weight: 700;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: #1a1a1f;
   background: #ffd15c;
-  padding: 1px 4px;
-  border-radius: 3px;
-  white-space: nowrap;
-  pointer-events: none;
+}
+
+.car-flag.shield {
+  background: #6fa8dc;
+  padding: 2px 5px;
+}
+
+.shield-icon {
+  width: 9px;
+  height: 10px;
+  background: #16232e;
+  clip-path: polygon(50% 0%, 100% 20%, 100% 55%, 50% 100%, 0% 55%, 0% 20%);
 }
 
 .car-box strong { font-size: 11px; letter-spacing: 0.04em; }

@@ -237,12 +237,26 @@ function renderTrain(el, cars, validIds) {
     else if (car.type === 'armor') stat = spent ? 'spent' : `${car.blockCharges}x block`;
     else if (car.type === 'claw') stat = awaitingPlacementAim || awaitingRefreshAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
-    box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}${car.protected ? ' · shielded' : ''}</span>`;
-    if (car.overcharged) {
-      const flag = document.createElement('div');
-      flag.className = 'overcharge-flag';
-      flag.textContent = 'Overcharged';
-      box.appendChild(flag);
+    box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
+    const flagKinds = [];
+    if (car.overcharged) flagKinds.push('overcharge');
+    if (car.protected) flagKinds.push('shield');
+    if (flagKinds.length) {
+      const flagRow = document.createElement('div');
+      flagRow.className = 'car-flags';
+      flagKinds.forEach((kind) => {
+        const flag = document.createElement('div');
+        flag.className = `car-flag ${kind}`;
+        if (kind === 'overcharge') {
+          flag.textContent = 'Overcharged';
+        } else {
+          const icon = document.createElement('div');
+          icon.className = 'shield-icon';
+          flag.appendChild(icon);
+        }
+        flagRow.appendChild(flag);
+      });
+      box.appendChild(flagRow);
     }
     if (validIds && car.id != null && validIds.has(car.id)) {
       box.classList.add('targetable');
