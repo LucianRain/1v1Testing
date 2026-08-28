@@ -227,9 +227,13 @@ function renderHp(labelEl, fillEl, hp, maxHp) {
 }
 
 // A car/engine's own HP, honoring the trigger-phase reveal gating (see
-// hpRevealOverride) - falls back to the live matchState value otherwise.
+// hpRevealOverride) - falls back to the live matchState value otherwise. A
+// staged/committed Refresh on this car previews instantly, ahead of both.
 function displayCarHp(car) {
-  return hpRevealOverride ? hpRevealOverride.carHp.get(car.id) ?? car.hp : car.hp;
+  if (hpRevealOverride) return hpRevealOverride.carHp.get(car.id) ?? car.hp;
+  const refreshPreview = myStagedRefreshPreview();
+  if (refreshPreview && refreshPreview.carId === car.id) return refreshPreview.hp;
+  return car.hp;
 }
 function displayEngineHp(side) {
   return hpRevealOverride ? hpRevealOverride.engineHp[side] : matchState[side].engine.hp;
@@ -384,6 +388,19 @@ function myStagedFlagPreviews() {
   return { mine: null, opp: null };
 }
 
+// Same "show my own action instantly" idea as myStagedFlagPreviews, but for
+// Refresh's HP/charge change rather than a flag overlay - mirrors exactly
+// what resolveSetup's refresh handling will actually do once resolution
+// runs, so there's nothing to reconcile once matchState catches up.
+function myStagedRefreshPreview() {
+  const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
+  if (!play || play.cardId !== 'refresh') return null;
+  const car = matchState[myRole].cars.find((c) => c.id === play.target);
+  if (!car) return null;
+  const hp = car.hp <= 0 ? Math.max(1, Math.ceil(car.maxHp / 2)) : car.maxHp;
+  return { carId: car.id, hp, blockCharges: car.type === 'armor' ? 1 : null };
+}
+
 // One dot per point of max HP - bright red for HP still remaining, dark red
 // for HP already lost. Used on both train cars and their hand-card previews.
 function hpDots(hp, maxHp) {
@@ -404,10 +421,14 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
   cars.forEach((car) => {
     const box = document.createElement('div');
     const pulse = car.id != null && pulsingIds.has(car.id);
+    const refreshPreview = myStagedRefreshPreview();
+    const previewingThisCar = refreshPreview && refreshPreview.carId === car.id;
     const displayBlockCharges =
       car.type === 'armor' && blockRevealOverride && car.id === blockRevealOverride.carId
         ? blockRevealOverride.displayCharges
-        : car.blockCharges;
+        : previewingThisCar && refreshPreview.blockCharges != null
+          ? refreshPreview.blockCharges
+          : car.blockCharges;
     const hp = displayCarHp(car);
     const junk = hp <= 0;
     const spent = (car.type === 'armor' && displayBlockCharges <= 0) || (car.type === 'claw' && car.fired);

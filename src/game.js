@@ -12,7 +12,7 @@ export const CARDS = {
   armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 4, desc: 'Couples on: 4 HP, blocks your next hit(s); each round, shields one random friendly car until the trigger phase ends' },
   repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 3, desc: 'Couples on: 3 HP, heals 1 HP every round' },
   overcharge: { name: 'Upgrade', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
-  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars for one round' },
+  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: "Protect one of your coupled cars for one round - can't be targeted or hit" },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
 };
 
@@ -230,8 +230,20 @@ export function resolveSetup(state, plays) {
 
   // The Shield card protects for exactly one round: whatever a car had
   // going into this round expires now, before this round's own Shield plays
-  // (if any) are applied below.
-  for (const s of SIDES) for (const car of state[s].cars) { car.disabledThisRound = false; car.justCoupled = false; car.protected = false; }
+  // (if any) are applied below. Same for last round's passive Armor shields
+  // (shieldedThisRound) - cleared here, right before this round's Armor
+  // Cars roll fresh ones, rather than at the end of last round's trigger
+  // phase, so the flag stays visible on screen for the whole round it
+  // actually applied to instead of disappearing before anything ever renders.
+  for (const s of SIDES) {
+    state[s].engine.shieldedThisRound = false;
+    for (const car of state[s].cars) {
+      car.disabledThisRound = false;
+      car.justCoupled = false;
+      car.protected = false;
+      car.shieldedThisRound = false;
+    }
+  }
   for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
 
   // sabotage / overcharge / reinforce / refresh - claw is handled below,
@@ -360,18 +372,19 @@ function fullTriggerOrder(state) {
 // junked car (0 HP) is never picked, so no shot is ever wasted on something
 // already destroyed. The Engine is the last thing standing: it's only a
 // valid hit target once every coupled car on that side has been killed (or
-// is shielded).
+// is shielded). A car shielded either by the Shield card (protected) or by
+// an Armor Car's passive pick (shieldedThisRound) can't be hit at all.
 function hittablePool(state, side) {
-  const livingCars = state[side].cars.filter((c) => c.hp > 0 && !c.shieldedThisRound).map((car) => ({ kind: 'car', car }));
+  const livingCars = state[side].cars.filter((c) => c.hp > 0 && !c.protected && !c.shieldedThisRound).map((car) => ({ kind: 'car', car }));
   if (livingCars.length > 0) return livingCars;
   return state[side].engine.hp > 0 && !state[side].engine.shieldedThisRound ? [{ kind: 'engine' }] : [];
 }
 
-// Sniper Cars hunt the Wrecking Car first - if one is still alive (and
-// unshielded) on the target side, that's the only candidate; otherwise falls
+// Sniper Cars hunt the Wrecking Car first - if one is still alive and
+// unshielded on the target side, that's the only candidate; otherwise falls
 // back to the usual living-cars-then-engine pool.
 function hittablePoolPreferClaw(state, side) {
-  const livingClaws = state[side].cars.filter((c) => c.type === 'claw' && c.hp > 0 && !c.shieldedThisRound).map((car) => ({ kind: 'car', car }));
+  const livingClaws = state[side].cars.filter((c) => c.type === 'claw' && c.hp > 0 && !c.protected && !c.shieldedThisRound).map((car) => ({ kind: 'car', car }));
   if (livingClaws.length > 0) return livingClaws;
   return hittablePool(state, side);
 }
@@ -533,13 +546,10 @@ export function resolveTrigger(state, plays) {
     for (const s of sidePriority(state)) applyHit(state, s, chip, log, 'sudden death', events, 'suddendeath', null, null);
   }
 
-  // This round's passive Armor shields expire now - they don't protect
-  // against next round's card-targeting the way the Shield card does.
-  for (const s of SIDES) {
-    state[s].engine.shieldedThisRound = false;
-    for (const car of state[s].cars) car.shieldedThisRound = false;
-  }
-
+  // This round's passive Armor shields are left in place here so they're
+  // still visible on screen through the rest of this round's rendering -
+  // resolveSetup clears them at the top of the NEXT round, right before
+  // that round's Armor Cars roll fresh ones.
   state.round += 1;
   return { log, events };
 }
