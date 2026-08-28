@@ -762,11 +762,42 @@ input:focus {
 }
 
 #hand {
+  position: relative;
   width: 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   justify-content: center;
+  /* Room for the little cars' wheels to hang below their boxes and rest on
+     the rail drawn in #hand::after, matching .track::after below. */
+  padding-bottom: 6px;
+}
+
+#hand::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  z-index: 0;
+  border-top: 2px solid rgba(255, 255, 255, 0.3);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.35) 0 4px,
+    transparent 4px 20px
+  );
+}
+
+.hand-car-box {
+  flex: 1 1 150px;
+  z-index: 1;
+}
+
+.hand-car-box:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .card-btn {

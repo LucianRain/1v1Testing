@@ -470,6 +470,20 @@ function hpDots(hp, maxHp) {
   return wrap;
 }
 
+// The one-line stat readout for a wagon/sniper/armor/repair/claw car -
+// shared between the real train car (renderTrain) and its hand-card
+// preview (renderHand), so a hand card always describes exactly what it'll
+// do once coupled. `car` just needs a `type` plus whichever of
+// dmgPerRound/shieldRolls/healPerRound that type uses.
+function carStatText(car, { junk = false, awaitingPlacementAim = false, spent = false } = {}) {
+  if (junk) return 'junk';
+  if (car.type === 'wagon') return car.dmgPerRound > 1 ? `${car.dmgPerRound} shots/rd` : '1 shot/rd';
+  if (car.type === 'sniper') return `${car.dmgPerRound}/rd · pierces`;
+  if (car.type === 'armor') return car.shieldRolls > 1 ? `${car.shieldRolls}x shield/rd` : '1x shield/rd';
+  if (car.type === 'claw') return awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
+  return `+${car.healPerRound}/rd`;
+}
+
 function renderTrain(el, cars, validIds, flagPreview, engineInfo, isMine) {
   el.innerHTML = '';
 
@@ -508,13 +522,7 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo, isMine) {
     const shieldRolls = previewingThisUpgrade && upgradePreview.shieldRolls != null ? upgradePreview.shieldRolls : car.shieldRolls;
     const healPerRound = previewingThisUpgrade && upgradePreview.healPerRound != null ? upgradePreview.healPerRound : car.healPerRound;
     const maxHp = previewingThisUpgrade ? upgradePreview.maxHp : car.maxHp;
-    let stat;
-    if (junk) stat = 'junk';
-    else if (car.type === 'wagon') stat = dmgPerRound > 1 ? `${dmgPerRound} shots/rd` : '1 shot/rd';
-    else if (car.type === 'sniper') stat = `${dmgPerRound}/rd · pierces`;
-    else if (car.type === 'armor') stat = shieldRolls > 1 ? `${shieldRolls}x shield/rd` : '1x shield/rd';
-    else if (car.type === 'claw') stat = awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
-    else stat = `+${healPerRound}/rd`;
+    const stat = carStatText({ type: car.type, dmgPerRound, shieldRolls, healPerRound }, { junk, awaitingPlacementAim, spent });
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
     box.appendChild(hpDots(hp, maxHp));
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
@@ -660,24 +668,38 @@ function renderHand() {
       return;
     }
     const card = CARDS[cardId];
-    const btn = document.createElement('button');
-    btn.className = 'card-btn';
     const needsTarget = !!card.target;
     const targets = needsTarget ? validTargets(matchState, myRole, cardId) : [];
     const disabled = handLocked || (needsTarget && targets.length === 0);
-    btn.disabled = disabled;
-    const desc = UPGRADABLE_TYPES.includes(cardId) ? `${card.desc} Drag onto itself to upgrade.` : card.desc;
-    btn.innerHTML = `<strong>${card.name}</strong><span>${desc}</span>`;
-    if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
+
     if (card.persistent) {
-      // Train cars (wagon/armor/repair/claw): drag onto your train to choose
-      // where in the order it couples on, instead of a plain click. For an
-      // upgradable type, dropping directly onto an existing car of the same
-      // type upgrades/revives it instead - see updateDropTarget(). A
+      // Train cars (Gunner/Sniper/Shield/Repair/Wrecker) render in hand as
+      // the exact same little car - wheels, color, name, stat line, HP dots
+      // - they'll be once coupled (see carStatText/renderTrain), so there's
+      // nothing to imagine about what you're about to drag onto the train.
+      const base = pendingCarFor(cardId, null);
+      const btn = document.createElement('button');
+      btn.className = `car-box ${cardId} hand-car-box draggable`;
+      btn.disabled = disabled;
+      const upgradeHint = UPGRADABLE_TYPES.includes(cardId) ? ' Drag onto itself to upgrade.' : '';
+      btn.title = `${card.desc}${upgradeHint}`;
+      btn.innerHTML = `<strong>${card.name}</strong><span>${carStatText(base)}</span>`;
+      btn.appendChild(hpDots(base.maxHp, base.maxHp));
+      // Drag onto your train to choose where in the order it couples on. For
+      // an upgradable type, dropping directly onto an existing car of the
+      // same type upgrades/revives it instead - see updateDropTarget(). A
       // Wrecking Car (claw) then needs a second drag - see onCardDragEnd.
-      btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startCardDrag(e, cardId, idx, btn));
-    } else if (cardId === 'sabotage' || cardId === 'reinforce' || cardId === 'refresh') {
+      handEl.appendChild(btn);
+      return;
+    }
+
+    const btn = document.createElement('button');
+    btn.className = 'card-btn';
+    btn.disabled = disabled;
+    btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
+    if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
+    if (cardId === 'sabotage' || cardId === 'reinforce' || cardId === 'refresh') {
       // Drag out an arcing targeting reticle at the target car (enemy for
       // Sabotage, your own for Reinforce/Refresh) instead of a two-step
       // click. Refresh on a spent Wrecking Car chains into a second drag to
@@ -708,11 +730,14 @@ function startCardDrag(e, cardId, handIdx, sourceBtn) {
   if (sourceBtn.disabled || dragState) return;
   e.preventDefault();
   const card = CARDS[cardId];
+  const base = pendingCarFor(cardId, null);
 
+  // Only ever called for a train-car type (see renderHand) - the ghost
+  // matches its little-car hand look, not a plain description card.
   const ghost = document.createElement('div');
-  ghost.className = 'card-ghost';
-  ghost.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
-  if (card.maxHp) ghost.appendChild(hpDots(card.maxHp, card.maxHp));
+  ghost.className = `car-box ${cardId} card-ghost`;
+  ghost.innerHTML = `<strong>${card.name}</strong><span>${carStatText(base)}</span>`;
+  ghost.appendChild(hpDots(base.maxHp, base.maxHp));
   document.body.appendChild(ghost);
 
   const indicator = document.createElement('div');
