@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, MAX_HP, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, resolveSetup, resolveHeal, resolveDamage, validTargets, checkWinner } from './game.js';
+import { CARDS, MAX_HP, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, resolveSetup, resolveTrigger, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -62,7 +62,7 @@ let autoMatchGeneration = 0; // bumped to invalidate an in-flight autoMode searc
 
 const BOT_DELAY_MS = 700; // how long the bot "thinks" before committing
 const REVEAL_MS = 1600; // how long the opponent's played card stays up
-const STAGE_MS = 550; // gap between setup / heal / damage in the resolution animation
+const STAGE_MS = 550; // gap between setup and the trigger phase in the resolution animation
 const BANNER_MS = 1300; // how long the "Round N" banner stays up
 const PROJECTILE_MS = 950; // wagon projectile travel time
 const SNIPER_PROJECTILE_MS = 550; // sniper shot: smaller and faster than a wagon shell
@@ -920,9 +920,10 @@ function showCardReveal(cardId) {
   });
 }
 
-// Runs once both plays are known: setup, then healing, then damage, each
-// applied and rendered in turn with a short pause so the player can follow
-// what happened, then a "Round N" banner before the next round unlocks.
+// Runs once both plays are known: setup, then the trigger phase (one whole
+// train's cars, in order, before the other's), each applied and rendered in
+// turn with a short pause so the player can follow what happened, then a
+// "Round N" banner before the next round unlocks.
 async function runResolution() {
   if (!myPlay || !oppPlay || gameOver || resolving) return;
   resolving = true;
@@ -971,15 +972,9 @@ async function runResolution() {
   await wait(STAGE_MS);
 
   inTriggerPhase = true;
-  const heal = resolveHeal(matchState, plays);
-  pulsingIds = new Set(heal.triggered);
-  render();
-  pulsingIds = new Set(); // consumed - don't let a later unrelated render replay it
-  await wait(STAGE_MS);
-
-  const preDamageHp = { host: matchState.host.hp, client: matchState.client.hp };
-  const damage = resolveDamage(matchState, plays); // fully resolved now; revealed to the player hit by hit below
-  await playDamageEvents(damage.events, preDamageHp);
+  const preTriggerHp = { host: matchState.host.hp, client: matchState.client.hp };
+  const trigger = resolveTrigger(matchState, plays); // fully resolved now; revealed to the player hit by hit below
+  await playTriggerEvents(trigger.events, preTriggerHp);
   inTriggerPhase = false;
   render();
   finishRound(plays);
@@ -1108,16 +1103,18 @@ function fireProjectile(fromEl, toEl, variant, durationMs) {
   });
 }
 
-// Replays a resolved damage stage hit by hit: wagon and sniper shots fire a
-// projectile (sniper's smaller and faster) and only reveal their damage once
-// it lands; other sources just get a short beat. Next car doesn't trigger
-// until the current one lands.
-// `displayedHp` starts at each side's HP from before this damage stage
-// (matchState itself is already fully resolved to the *end* of the stage by
-// the time this runs) and is only advanced to an event's hpAfter once that
-// event has actually landed - so neither the HP bar nor the train's position
-// on the rails moves early.
-async function playDamageEvents(events, displayedHp) {
+// Replays a resolved trigger phase event by event, one whole train (in
+// position order) completely before the other starts, per resolveTrigger's
+// side-major ordering. Wagon and sniper shots fire a projectile (sniper's
+// smaller and faster) and only reveal their damage once it lands; heals and
+// other sources just get a short beat. Next car doesn't trigger until the
+// current one lands.
+// `displayedHp` starts at each side's HP from before this stage (matchState
+// itself is already fully resolved to the *end* of the stage by the time
+// this runs) and is only advanced to an event's hpAfter once that event has
+// actually landed - so neither the HP bar nor the train's position on the
+// rails moves early.
+async function playTriggerEvents(events, displayedHp) {
   const hpOverride = () => ({ my: displayedHp[myRole], opp: displayedHp[oppRole] });
 
   for (const event of events) {
@@ -1141,6 +1138,7 @@ async function playDamageEvents(events, displayedHp) {
     blockRevealOverride = null;
     displayedHp[event.targetSide] = event.hpAfter;
     if (event.blocked) pulsingIds = new Set([event.blockedByCarId]);
+    else if (event.kind === 'heal') pulsingIds = new Set([event.attackerCarId]);
     const hpEl = event.targetSide === myRole ? myHpEl : oppHpEl;
     const fillEl = event.targetSide === myRole ? myHpFillEl : oppHpFillEl;
     renderHp(hpEl, fillEl, event.hpAfter);

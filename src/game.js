@@ -303,28 +303,6 @@ function inTriggerOrder(cars) {
   return cars.slice().reverse();
 }
 
-// Every coupled, non-disabled Repair Car heals its healPerRound, one car at
-// a time in position order; whole trains go in the round's trigger order.
-// Returns { log, triggered } - triggered is the car ids that fired, for the
-// UI to pulse.
-export function resolveHeal(state, plays) {
-  const log = [];
-  const triggered = [];
-  for (const s of triggerOrder(state)) {
-    for (const car of inTriggerOrder(state[s].cars)) {
-      if (car.type !== 'repair' || car.disabledThisRound || car.healPerRound <= 0) continue;
-      const before = state[s].hp;
-      state[s].hp = Math.min(MAX_HP, state[s].hp + car.healPerRound);
-      const healed = state[s].hp - before;
-      if (healed > 0) {
-        log.push(`${s}'s repair car heals ${healed} HP`);
-        triggered.push(car.id);
-      }
-    }
-  }
-  return { log, triggered };
-}
-
 // A single hit against a target: an available armor car absorbs it (one
 // charge, falls off once spent), otherwise it lands as real damage. Records
 // a structured event (kind, source car, whether it was blocked and by what,
@@ -364,28 +342,48 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
   });
 }
 
-// Whole trains fire in the round's trigger order; within a train, coupled
-// wagons go in position order. Each hit checks the target's armor
-// individually, in that same sequence - overrides the old
-// blocks-the-biggest-hit priority logic. Returns { log, events } - events is
-// the ordered hit-by-hit trace described in applyHit, above.
-export function resolveDamage(state, plays) {
+// One whole train triggers completely - every coupled, non-disabled car in
+// position order, whichever effect it has (heal or damage) - before the
+// other train starts, per the round's trigger order. Returns { log, events }
+// - events is the ordered hit-by-hit trace described in applyHit, above,
+// with heal entries in the same shape (kind: 'heal', blocked: false,
+// targetSide === attackerSide) so the UI can replay them the same way.
+export function resolveTrigger(state, plays) {
   const log = [];
   const events = [];
 
-  for (const attacker of triggerOrder(state)) {
-    const target = otherSide(attacker);
+  for (const side of triggerOrder(state)) {
+    const target = otherSide(side);
 
-    for (const car of inTriggerOrder(state[attacker].cars)) {
-      if (car.type === 'wagon' && !car.disabledThisRound) {
-        applyHit(state, target, car.dmgPerRound, log, `${attacker}'s artillery wagon`, events, 'wagon', attacker, car.id);
-      } else if (car.type === 'sniper' && !car.disabledThisRound) {
-        applyHit(state, target, car.dmgPerRound, log, `${attacker}'s sniper car`, events, 'sniper', attacker, car.id, true);
+    for (const car of inTriggerOrder(state[side].cars)) {
+      if (car.disabledThisRound) continue;
+      if (car.type === 'repair' && car.healPerRound > 0) {
+        const before = state[side].hp;
+        state[side].hp = Math.min(MAX_HP, state[side].hp + car.healPerRound);
+        const healed = state[side].hp - before;
+        if (healed > 0) {
+          log.push(`${side}'s repair car heals ${healed} HP`);
+          events.push({
+            kind: 'heal',
+            attackerSide: side,
+            attackerCarId: car.id,
+            targetSide: side,
+            amount: healed,
+            blocked: false,
+            blockedByCarId: null,
+            hpAfter: state[side].hp,
+          });
+        }
+      } else if (car.type === 'wagon') {
+        applyHit(state, target, car.dmgPerRound, log, `${side}'s artillery wagon`, events, 'wagon', side, car.id);
+      } else if (car.type === 'sniper') {
+        applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, true);
       }
     }
   }
 
-  // Sudden death: escalating chip damage once round 9+ is reached
+  // Sudden death: escalating chip damage once round 9+ is reached - after
+  // every car's own trigger, still in the round's side-major order.
   if (state.round >= SUDDEN_DEATH_START_ROUND) {
     const chip = state.round - (SUDDEN_DEATH_START_ROUND - 1);
     for (const s of triggerOrder(state)) applyHit(state, s, chip, log, 'sudden death', events, 'suddendeath', null, null);
@@ -395,13 +393,12 @@ export function resolveDamage(state, plays) {
   return { log, events };
 }
 
-// Convenience: run all three stages back to back, for tests/simulations that
+// Convenience: run both stages back to back, for tests/simulations that
 // don't care about the animated staging the UI does between them.
 export function resolveRound(state, plays) {
   const setup = resolveSetup(state, plays);
-  const heal = resolveHeal(state, plays);
-  const damage = resolveDamage(state, plays);
-  state.log = [...setup.log, ...heal.log, ...damage.log];
+  const trigger = resolveTrigger(state, plays);
+  state.log = [...setup.log, ...trigger.log];
   return state;
 }
 
