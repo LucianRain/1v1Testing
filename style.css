@@ -870,8 +870,11 @@ input:focus {
 }
 
 /* A played card's vacated slot - keeps its exact box in the hand row so the
-   remaining card(s) don't resize or shift into the empty space. */
-.card-btn.placeholder {
+   remaining card(s) don't resize or shift into the empty space. Covers both
+   shapes renderHand builds it in: a plain card-btn for a non-persistent card
+   (just Sabotage now) and a hand-car-box for a persistent train-car card. */
+.card-btn.placeholder,
+.hand-car-box.placeholder {
   visibility: hidden;
   pointer-events: none;
 }
