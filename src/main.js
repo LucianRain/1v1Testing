@@ -1134,11 +1134,11 @@ function abortInProgressInteractions() {
   awaitingAim = null;
 }
 
-// Whatever's currently shown in the hand row (the played card, if any,
-// already left back in stagePlay - this is whatever real cards are left)
-// slides out to the left right as the turn ends, before anything about the
-// next round - a redrawn hand on a pass, or the resolution animation -
-// actually starts.
+// Passing discards your whole hand and redraws it (see redrawHand) - the
+// old cards slide out to the left before the new ones slide in, so nothing
+// just vanishes/teleports. Playing a card is different: it already left
+// back in stagePlay, and whatever's kept just stays exactly where it is
+// for next round - not discarded, so it never plays this exit animation.
 function playHandExitAnimation() {
   const cards = Array.from(handEl.children).filter((el) => !el.classList.contains('placeholder'));
   if (!cards.length) return Promise.resolve();
@@ -1148,7 +1148,7 @@ function playHandExitAnimation() {
 
 // Shared by the End Turn button and the 15s clock running out. Whatever is
 // currently staged is what actually gets submitted; if nothing was staged,
-// this round counts as a pass. Async now (waits for the hand's exit
+// this round counts as a pass. Async now (a pass waits for the hand's exit
 // animation first) - endingTurn guards against a second call (a fast
 // double-click, or the clock firing at the same moment) landing during that
 // window, before btnPass has actually disabled.
@@ -1160,16 +1160,17 @@ async function endTurn() {
   abortInProgressInteractions();
   btnPass.disabled = true;
 
-  await playHandExitAnimation();
-  endingTurn = false;
-
   const staged = stagedPlay;
   stagedPlay = null;
 
   if (staged) {
+    endingTurn = false;
     commitPlay(staged.cardId, staged.target, staged.insertIndex, staged.refreshTarget);
     return;
   }
+
+  await playHandExitAnimation();
+  endingTurn = false;
 
   myHand = redrawHand(myDeck, myHand);
   myPlay = { card: null, target: null };
