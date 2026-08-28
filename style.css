@@ -458,6 +458,10 @@ input:focus {
   clip-path: polygon(50% 0%, 100% 20%, 100% 55%, 50% 100%, 0% 55%, 0% 20%);
 }
 
+.shield-icon.shield-break {
+  opacity: 0;
+}
+
 .car-box strong { font-size: 11px; letter-spacing: 0.04em; }
 .car-box span { opacity: 0.75; }
 
@@ -574,6 +578,14 @@ input:focus {
   .car-box.upgrade-target {
     animation: car-pulse 0.6s ease-in-out infinite;
   }
+
+  .shield-icon.shield-pulse {
+    animation: shield-pulse 0.26s ease;
+  }
+
+  .shield-icon.shield-break {
+    animation: shield-break 0.38s ease forwards;
+  }
 }
 
 @keyframes wiggle {
@@ -586,6 +598,18 @@ input:focus {
   0% { transform: scale(1); }
   40% { transform: scale(1.2); }
   100% { transform: scale(1); }
+}
+
+@keyframes shield-pulse {
+  0% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.5); filter: brightness(1.8); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+@keyframes shield-break {
+  0% { transform: scale(1) rotate(0deg); opacity: 1; }
+  30% { transform: scale(1.35) rotate(-10deg); opacity: 1; }
+  100% { transform: scale(0.3) rotate(30deg); opacity: 0; }
 }
 
 .projectile {

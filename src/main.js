@@ -66,6 +66,8 @@ const EVENT_PAUSE_MS = 300; // non-projectile damage events (sudden death)
 const EVENT_GAP_MS = 150; // breather between damage events once one has landed
 const WRECK_LINE_MS = 380; // Wrecking Car's grapple line reaching the target
 const WRECK_PULL_MS = 900; // pull + derail + freeze + fade, one combined animation
+const SHIELD_PULSE_MS = 260; // a shield icon pulses once it absorbs a hit...
+const SHIELD_BREAK_MS = 380; // ...then shatters, right before the shield actually lifts
 const TURN_TIME_MS = 15000; // how long you have to act before your turn auto-passes
 
 let myRole = null; // 'host' | 'client'
@@ -100,6 +102,11 @@ let pulsingEngineSides = new Set(); // side keys ('host'/'client') whose engine 
 // advanced to its real post-hit value once that specific hit has landed, so
 // a car doesn't show as damaged/junked before its own animation gets there.
 let hpRevealOverride = null;
+// { carIds: Set<number>, engineSides: Set<'host'|'client'> } during a
+// trigger-phase reveal - a Shield that gets broken mid-replay is already
+// cleared in matchState (fully resolved ahead of time, like HP above), so
+// this keeps it drawn as shielded until its own break animation lands.
+let shieldRevealOverride = null;
 let bannerTimeout = null;
 let turnTimeout = null; // fires endTurn() when the 15s turn clock runs out
 let turnTickInterval = null; // updates the visible countdown every tick
@@ -269,8 +276,10 @@ function renderTrains(hpOverride) {
   }
 
   const flagPreviews = myStagedFlagPreviews();
-  const myEngine = { hp: displayEngineHp(myRole), maxHp: matchState[myRole].engine.maxHp, pulse: pulsingEngineSides.has(myRole), shielded: matchState[myRole].engine.shieldedThisRound };
-  const oppEngine = { hp: displayEngineHp(oppRole), maxHp: matchState[oppRole].engine.maxHp, pulse: pulsingEngineSides.has(oppRole), shielded: matchState[oppRole].engine.shieldedThisRound };
+  const myEngineShielded = matchState[myRole].engine.shieldedThisRound || (shieldRevealOverride && shieldRevealOverride.engineSides.has(myRole));
+  const oppEngineShielded = matchState[oppRole].engine.shieldedThisRound || (shieldRevealOverride && shieldRevealOverride.engineSides.has(oppRole));
+  const myEngine = { hp: displayEngineHp(myRole), maxHp: matchState[myRole].engine.maxHp, pulse: pulsingEngineSides.has(myRole), shielded: myEngineShielded };
+  const oppEngine = { hp: displayEngineHp(oppRole), maxHp: matchState[oppRole].engine.maxHp, pulse: pulsingEngineSides.has(oppRole), shielded: oppEngineShielded };
   renderTrain(myTrainEl, myCars, myValidIds, flagPreviews.mine, myEngine);
   renderTrain(oppTrainEl, oppCars, oppValidIds, flagPreviews.opp, oppEngine);
 
@@ -445,7 +454,11 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
     // staged-but-not-yet-resolved Upgrade/merge previews as current+1.
     const currentLevel = car.upgradeLevel || 0;
     const overchargeCount = previewFlag === 'overcharge' ? currentLevel + 1 : currentLevel;
-    const showShield = car.protected || car.shieldedThisRound || previewFlag === 'shield';
+    const showShield =
+      car.protected ||
+      car.shieldedThisRound ||
+      previewFlag === 'shield' ||
+      (shieldRevealOverride && car.id != null && shieldRevealOverride.carIds.has(car.id));
     const showDisabled = car.disabledThisRound || previewFlag === 'disabled';
     if (overchargeCount > 0 || showShield || showDisabled) {
       const flagRow = document.createElement('div');
@@ -1055,8 +1068,20 @@ async function runResolution() {
     engineHp: { host: matchState.host.engine.hp, client: matchState.client.engine.hp },
   };
   const trigger = resolveTrigger(matchState, plays); // fully resolved now; revealed to the player hit by hit below
+  // Same idea as hpRevealOverride: a Shield that gets consumed during this
+  // trigger phase is already broken in matchState by now - keep it drawn as
+  // shielded until the specific event that broke it plays its own animation.
+  const shieldCarIds = new Set();
+  const shieldEngineSides = new Set();
+  for (const ev of trigger.events) {
+    if (!ev.shielded) continue;
+    if (ev.hitKind === 'engine') shieldEngineSides.add(ev.targetSide);
+    else if (ev.hitKind === 'car') shieldCarIds.add(ev.hitCarId);
+  }
+  shieldRevealOverride = { carIds: shieldCarIds, engineSides: shieldEngineSides };
   await playTriggerEvents(trigger.events, preTriggerHp);
   hpRevealOverride = null;
+  shieldRevealOverride = null;
   inTriggerPhase = false;
   render();
   finishRound(plays);
@@ -1228,8 +1253,30 @@ async function playTriggerEvents(events, displayedHp) {
     pulsingIds = new Set();
     pulsingEngineSides = new Set();
 
+    if (event.shielded) {
+      await playShieldBreak(event.targetSide, event.hitKind, event.hitCarId);
+      if (event.hitKind === 'engine') shieldRevealOverride.engineSides.delete(event.targetSide);
+      else if (event.hitKind === 'car') shieldRevealOverride.carIds.delete(event.hitCarId);
+      renderTrains(hpOverride());
+    }
+
     await wait(EVENT_GAP_MS);
   }
+}
+
+// A hit absorbed by a Shield: pulse the shield icon, then shatter it, right
+// where it landed - only after this does shieldRevealOverride let it
+// disappear from the next render, so the break is seen rather than the icon
+// just vanishing.
+async function playShieldBreak(side, hitKind, hitCarId) {
+  const boxEl = hitKind === 'engine' ? engineBoxEl(side) : carBoxEl(side, hitCarId);
+  const iconEl = boxEl && boxEl.querySelector('.shield-icon');
+  if (!iconEl) return;
+  iconEl.classList.add('shield-pulse');
+  await wait(SHIELD_PULSE_MS);
+  iconEl.classList.remove('shield-pulse');
+  iconEl.classList.add('shield-break');
+  await wait(SHIELD_BREAK_MS);
 }
 
 function finishRound(plays) {

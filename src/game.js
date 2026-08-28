@@ -17,9 +17,9 @@ export const CARDS = {
   sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, 1 dmg every round in one shot, targets the Wrecking Car first if one is alive' },
   claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
-  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, each round shields one random friendly car (or the engine) until the trigger phase ends' },
+  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, each round shields one random friendly car (or the engine) - blocks the next hit on it, then breaks' },
   repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, heals 1 HP every round' },
-  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: "Protect one of your coupled cars for one round - can't be targeted or hit" },
+  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars for one round - blocks the next hit on it, then breaks' },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
 };
 
@@ -436,11 +436,11 @@ function pickRandom(pool, rng) {
 // grants its passive random Shield (see the 'armor' case in resolveTrigger,
 // below). If what it lands on happens to be Shielded (the Shield card's
 // protected, or an Armor Car's passive shieldedThisRound pick), the shot is
-// simply wasted - no damage to anyone, giving Shield a real chance to fully
-// negate a hit rather than just always pushing the same total damage onto
-// someone else. Records a structured event so the UI can replay the
-// sequence hit by hit - e.g. firing a projectile at the actual car it hit,
-// and only revealing the result once it "lands".
+// wasted - no damage to anyone - but the shield only absorbs ONE hit: it
+// breaks the instant it does, so a later shot that lands on the same target
+// later this same round deals damage normally. Records a structured event
+// so the UI can replay the sequence hit by hit - e.g. firing a projectile
+// at the actual car it hit, and only revealing the result once it "lands".
 function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId, poolBuilder = hittablePool) {
   if (amount <= 0) return;
 
@@ -456,7 +456,10 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     shielded = state[targetSide].engine.shieldedThisRound;
     if (shielded) {
       targetHpAfter = state[targetSide].engine.hp;
-      log.push(`${targetSide}'s shielded engine takes no damage from ${sourceLabel}`);
+      // The shield absorbs this one hit, then breaks - a later hit this same
+      // round lands normally, it doesn't just keep no-selling every shot.
+      state[targetSide].engine.shieldedThisRound = false;
+      log.push(`${targetSide}'s shielded engine takes no damage from ${sourceLabel} and the shield breaks`);
     } else {
       state[targetSide].engine.hp = Math.max(0, state[targetSide].engine.hp - amount);
       targetHpAfter = state[targetSide].engine.hp;
@@ -469,7 +472,10 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     shielded = car.protected || car.shieldedThisRound;
     if (shielded) {
       targetHpAfter = car.hp;
-      log.push(`${targetSide}'s shielded ${car.type} takes no damage from ${sourceLabel}`);
+      // Same one-hit-and-broken rule as the engine's shield, above.
+      car.protected = false;
+      car.shieldedThisRound = false;
+      log.push(`${targetSide}'s shielded ${car.type} takes no damage from ${sourceLabel} and the shield breaks`);
     } else {
       car.hp = Math.max(0, car.hp - amount);
       junked = car.hp <= 0;
