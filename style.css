@@ -57,6 +57,20 @@ html, body {
   margin: 0 0 24px;
 }
 
+.cross-link {
+  margin: 24px 0 0;
+  font-size: 13px;
+}
+
+.cross-link a {
+  color: #8fb8ff;
+  text-decoration: none;
+}
+
+.cross-link a:hover {
+  text-decoration: underline;
+}
+
 .quick-actions {
   display: flex;
   flex-direction: column;

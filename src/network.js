@@ -1,7 +1,9 @@
-// Thin wrapper around PeerJS for a single 1:1 P2P connection.
-// PeerJS's free public cloud broker is only used for signaling (finding the
-// other peer) - once connected, game data flows directly browser-to-browser
-// over WebRTC, so this works fine from a static GitHub Pages site.
+// Thin wrapper around PeerJS for a single 1:1 P2P connection. Signaling
+// (finding the other peer) uses PeerJS's free public cloud broker when
+// loaded as index.html (fine from a static GitHub Pages site), or this
+// project's own self-hosted signaling server (see server.js) when loaded as
+// local.html - either way, once connected, game data flows directly
+// browser-to-browser over WebRTC.
 
 // How long to wait for the initial signaling connection (to PeerJS's cloud
 // broker) to open, before giving up. Without this, a broker connection that
@@ -25,7 +27,27 @@ const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
-const PEER_OPTIONS = { config: { iceServers: ICE_SERVERS } };
+
+// local.html is served by this project's own local server (see server.js),
+// which also hosts a private PeerJS signaling server on the same host/port
+// at /peerjs - point Peer at that instead of PeerJS's public cloud broker.
+// Two devices on the same LAN talking to a signaling server that's also on
+// that LAN sidesteps both the public broker as a dependency and the NAT
+// hairpin problem two devices behind the same router can hit going over the
+// internet - WebRTC can find a direct local path between them instead.
+const useLocalSignaling = location.pathname.endsWith('local.html');
+
+function peerOptions() {
+  const config = { config: { iceServers: ICE_SERVERS } };
+  if (!useLocalSignaling) return config;
+  return {
+    ...config,
+    host: location.hostname,
+    port: location.port ? Number(location.port) : location.protocol === 'https:' ? 443 : 80,
+    path: '/peerjs',
+    secure: location.protocol === 'https:',
+  };
+}
 
 export class PeerNetwork extends EventTarget {
   constructor() {
@@ -38,7 +60,7 @@ export class PeerNetwork extends EventTarget {
   host(existingId) {
     this.role = 'host';
     return new Promise((resolve, reject) => {
-      const peer = new Peer(existingId || shortId(), PEER_OPTIONS);
+      const peer = new Peer(existingId || shortId(), peerOptions());
       this.peer = peer;
       let settled = false;
 
@@ -94,7 +116,7 @@ export class PeerNetwork extends EventTarget {
   join(hostId, timeoutMs = 12000) {
     this.role = 'client';
     return new Promise((resolve, reject) => {
-      const peer = new Peer(undefined, PEER_OPTIONS);
+      const peer = new Peer(undefined, peerOptions());
       this.peer = peer;
       let settled = false;
 

@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reroute</title>
+  <title>Reroute (LAN)</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="menu-overlay">
     <div class="panel">
       <h1>Reroute</h1>
-      <p class="subtitle">1v1 train duel</p>
+      <p class="subtitle">1v1 train duel &middot; local network</p>
       <p class="version" id="version">v44</p>
 
       <div class="menu-section">
@@ -19,15 +19,15 @@
       </div>
 
       <div class="menu-section">
-        <h2>Play online</h2>
-        <div class="mode-toggle">
+        <h2>Play on this network</h2>
+        <div class="mode-toggle hidden">
           <button id="btn-mode-auto" class="mode-btn active">Auto Match</button>
           <button id="btn-mode-invite" class="mode-btn">Invite</button>
         </div>
 
         <div id="auto-mode-panel" class="mode-panel">
-          <p class="mode-hint">Instantly pairs you with whoever else hits Find Match. If a match is already full, you'll wait for a spot.</p>
-          <button id="btn-auto-match">Find Match</button>
+          <p class="mode-hint">Pairs you with whoever else on this network hits Join Game. If a match is already full, you'll wait for a spot.</p>
+          <button id="btn-auto-match">Join Game</button>
           <button id="btn-auto-cancel" class="hidden">Cancel</button>
           <p class="status" id="auto-status"></p>
         </div>
@@ -57,7 +57,7 @@
         </div>
       </div>
 
-      <p class="cross-link"><a href="https://github.com/LucianRain/1v1Testing#host-a-lan-game">On the same network as your friend? Host a LAN game instead &rarr;</a></p>
+      <p class="cross-link"><a href="https://lucianrain.github.io/1v1Testing/">Not on this network? Play online instead &rarr;</a></p>
     </div>
   </div>
 

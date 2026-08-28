@@ -1,0 +1,14 @@
+{
+  "name": "reroute",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reroute - 1v1 train duel. Local LAN server: serves the game and a self-hosted signaling server on one port.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "peer": "^1.0.2"
+  }
+}
