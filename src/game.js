@@ -9,22 +9,23 @@ export const SUDDEN_DEATH_START_ROUND = 9;
 // upgrade it, or drop it anywhere else in the train to couple a separate
 // duplicate instead. There's no dedicated Upgrade card anymore - this list
 // is what resolveSetup checks a play's target against, and what the UI
-// offers the drag-onto-self interaction for. Wrecking Car and Medic are
-// deliberately left out: Wrecker has nothing to scale, and Medic's revive
-// is capped at exactly one attempt per round on purpose - letting it stack
-// would mean one card permanently snowballing every turn it's re-played,
-// which is worse than just letting extra copies couple as separate,
-// individually-killable cars instead.
+// offers the drag-onto-self interaction for. Wrecking Car, Medic, and
+// Saboteur are deliberately left out: Wrecker has nothing to scale, and
+// Medic/Saboteur's one attempt per round is capped on purpose - letting
+// either stack would mean one card permanently snowballing every turn it's
+// re-played, which is worse than just letting extra copies couple as
+// separate, individually-killable cars instead.
 export const UPGRADABLE_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
 
 export const CARDS = {
   wagon: { name: 'Gunner', target: null, persistent: true, weapon: true, maxHp: 1, desc: '1 HP. 1 dmg/round.' },
   sniper: { name: 'Sniper', target: null, persistent: true, weapon: true, maxHp: 1, desc: '1 HP. 1 dmg/round. Hits the Wrecker first.' },
   claw: { name: 'Wrecker', target: 'enemy_car', persistent: true, maxHp: 1, desc: '1 HP. Destroys an enemy car.' },
-  sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: 'Disables an enemy car for a round.' },
+  sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: 'Knocks an enemy car down a level for a round.' },
   armor: { name: 'Shield', target: null, persistent: true, maxHp: 2, desc: '2 HP. Shields a random car each round.' },
   repair: { name: 'Repair', target: null, persistent: true, maxHp: 1, desc: '1 HP. Heals 1 HP/round.' },
   medic: { name: 'Medic', target: null, persistent: true, maxHp: 1, desc: '1 HP. Revives a junked car each round.' },
+  saboteur: { name: 'Saboteur', target: null, persistent: true, maxHp: 1, desc: '1 HP. Sabotages a random enemy car each round.' },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heals or revives a car.' },
 };
 
@@ -258,7 +259,7 @@ export function resolveSetup(state, plays) {
   for (const s of SIDES) {
     state[s].engine.shieldedThisRound = false;
     for (const car of state[s].cars) {
-      car.disabledThisRound = false;
+      car.disabledThisRound = 0;
       car.justCoupled = false;
       car.shieldedThisRound = false;
     }
@@ -274,7 +275,10 @@ export function resolveSetup(state, plays) {
     if (play.card === 'sabotage') {
       const car = findCar(state[opp].cars, play.target);
       if (car && car.hp > 0) {
-        car.disabledThisRound = true;
+        // Knocks one upgrade level off its output for the round (see
+        // resolveTrigger) rather than fully disabling it outright - stacks
+        // with the Saboteur car's own passive if both land on the same car.
+        car.disabledThisRound = (car.disabledThisRound || 0) + 1;
         log.push(`${s} sabotages ${opp}'s ${car.type}`);
       }
     } else if (play.card === 'refresh') {
@@ -336,22 +340,25 @@ export function resolveSetup(state, plays) {
       existing.upgradeLevel = (existing.upgradeLevel || 0) + 1;
       log.push(`${s}'s new ${play.card} merges into their existing one, upgrading it`);
     } else if (play.card === 'armor') {
-      car = { id: ++state.carCounter, type: 'armor', shieldRolls: 1, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
+      car = { id: ++state.carCounter, type: 'armor', shieldRolls: 1, disabledThisRound: 0, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {
-      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
+      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, disabledThisRound: 0, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
       log.push(`${s} couples an Artillery Wagon`);
     } else if (play.card === 'sniper') {
-      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
+      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, disabledThisRound: 0, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
       log.push(`${s} couples a Sniper Car`);
     } else if (play.card === 'repair') {
-      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
+      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, disabledThisRound: 0, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
       log.push(`${s} couples a Repair Car`);
     } else if (play.card === 'medic') {
-      car = { id: ++state.carCounter, type: 'medic', disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.medic.maxHp, maxHp: CARDS.medic.maxHp };
+      car = { id: ++state.carCounter, type: 'medic', disabledThisRound: 0, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.medic.maxHp, maxHp: CARDS.medic.maxHp };
       log.push(`${s} couples a Medic`);
+    } else if (play.card === 'saboteur') {
+      car = { id: ++state.carCounter, type: 'saboteur', disabledThisRound: 0, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.saboteur.maxHp, maxHp: CARDS.saboteur.maxHp };
+      log.push(`${s} couples a Saboteur`);
     } else if (play.card === 'claw') {
-      car = { id: ++state.carCounter, type: 'claw', fired: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
+      car = { id: ++state.carCounter, type: 'claw', fired: false, disabledThisRound: 0, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
       log.push(`${s} couples a Wrecking Car`);
     }
     if (car) insertCar(state[s].cars, car, play.insertIndex);
@@ -453,6 +460,13 @@ function medicPool(state, side) {
   return state[side].cars.filter((c) => c.hp <= 0).map((car) => ({ kind: 'car', car }));
 }
 
+// Saboteur's target pool for its own passive - unlike a hit, this never
+// falls back to the engine once every car is dead. It only ever picks a
+// living enemy car, or nothing at all.
+function saboteurPool(state, side) {
+  return state[side].cars.filter((c) => c.hp > 0).map((car) => ({ kind: 'car', car }));
+}
+
 function pickRandom(pool, rng) {
   if (!pool.length) return null;
   return pool[Math.floor(rng() * pool.length)];
@@ -537,51 +551,65 @@ export function resolveTrigger(state, plays) {
 
   for (const { side, car } of fullTriggerOrder(state)) {
     const target = otherSide(side);
-    if (car.disabledThisRound || car.hp <= 0) continue;
-    if (car.type === 'repair' && car.healPerRound > 0) {
-      const picked = pickRandom(healablePool(state, side), state.battleRng);
-      if (picked) {
-        const healTarget = picked.kind === 'engine' ? state[side].engine : picked.car;
-        const before = healTarget.hp;
-        healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + car.healPerRound);
-        const healed = healTarget.hp - before;
-        if (healed > 0) {
-          const label = picked.kind === 'engine' ? 'engine' : picked.car.type;
-          log.push(`${side}'s repair car heals ${label} for ${healed} HP`);
-          events.push({
-            kind: 'heal',
-            attackerSide: side,
-            attackerCarId: car.id,
-            targetSide: side,
-            amount: healed,
-            hitKind: picked.kind,
-            hitCarId: picked.kind === 'car' ? picked.car.id : null,
-            targetHpAfter: healTarget.hp,
-            junked: false,
-            hpAfter: computeHp(state, side).hp,
-          });
+    if (car.hp <= 0) continue;
+    // Sabotage no longer fully skips a car's turn - it knocks one upgrade
+    // level off its output for the round instead (see the manual Sabotage
+    // card and the Saboteur car's own passive, below), floored at 0. An
+    // unupgraded (level 0) car sabotaged once has nothing left to reduce,
+    // so it still ends up doing nothing - "completely disabled" is just
+    // what a level-0 car sabotaged looks like, not a separate rule.
+    const sabotage = car.disabledThisRound || 0;
+    if (car.type === 'repair') {
+      const healPerRound = Math.max(0, car.healPerRound - sabotage);
+      if (healPerRound > 0) {
+        const picked = pickRandom(healablePool(state, side), state.battleRng);
+        if (picked) {
+          const healTarget = picked.kind === 'engine' ? state[side].engine : picked.car;
+          const before = healTarget.hp;
+          healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + healPerRound);
+          const healed = healTarget.hp - before;
+          if (healed > 0) {
+            const label = picked.kind === 'engine' ? 'engine' : picked.car.type;
+            log.push(`${side}'s repair car heals ${label} for ${healed} HP`);
+            events.push({
+              kind: 'heal',
+              attackerSide: side,
+              attackerCarId: car.id,
+              targetSide: side,
+              amount: healed,
+              hitKind: picked.kind,
+              hitCarId: picked.kind === 'car' ? picked.car.id : null,
+              targetHpAfter: healTarget.hp,
+              junked: false,
+              hpAfter: computeHp(state, side).hp,
+            });
+          }
         }
       }
     } else if (car.type === 'wagon') {
-      // Each point of dmgPerRound (base 1, +1 per Upgrade) is its own
-      // separately-aimed 1-dmg shot, not one lump hit - an upgraded wagon
-      // can spread damage across several enemy cars in a single round.
-      for (let i = 0; i < car.dmgPerRound; i++) {
+      // Each point of dmgPerRound (base 1, +1 per Upgrade, -1 per sabotage)
+      // is its own separately-aimed 1-dmg shot, not one lump hit - an
+      // upgraded wagon can spread damage across several enemy cars in a
+      // single round.
+      const dmgPerRound = Math.max(0, car.dmgPerRound - sabotage);
+      for (let i = 0; i < dmgPerRound; i++) {
         applyHit(state, target, 1, log, `${side}'s artillery wagon`, events, 'wagon', side, car.id);
       }
     } else if (car.type === 'sniper') {
       // Unlike the wagon, a sniper always fires its whole dmgPerRound as
       // one shot - and it always goes for the Wrecking Car first.
-      applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, hittablePoolPreferClaw);
+      const dmgPerRound = Math.max(0, car.dmgPerRound - sabotage);
+      applyHit(state, target, dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, hittablePoolPreferClaw);
     } else if (car.type === 'armor') {
       // Armor's passive shield is granted right when its own turn in the
       // trigger order comes up, not upfront before the round starts - a car
       // that fires earlier in the order (closer to the engine) is exposed to
       // hits before this armor car has had a chance to shield anyone. It no
       // longer blocks a hit outright - each of its shieldRolls (base 1, +1
-      // per Upgrade) independently picks a random friendly car or the engine
-      // to shield for the rest of this trigger phase.
-      for (let i = 0; i < car.shieldRolls; i++) {
+      // per Upgrade, -1 per sabotage) independently picks a random friendly
+      // car or the engine to shield for the rest of this trigger phase.
+      const shieldRolls = Math.max(0, car.shieldRolls - sabotage);
+      for (let i = 0; i < shieldRolls; i++) {
         const picked = pickRandom(shieldablePool(state, side), state.battleRng);
         if (picked) {
           if (picked.kind === 'engine') state[side].engine.shieldedThisRound = true;
@@ -590,24 +618,36 @@ export function resolveTrigger(state, plays) {
       }
     } else if (car.type === 'medic') {
       // Not upgradable (see UPGRADABLE_TYPES) - always exactly one revival
-      // attempt per round, no matter how many Medics end up coupled.
-      const picked = pickRandom(medicPool(state, side), state.battleRng);
+      // attempt per round, no matter how many Medics end up coupled. It has
+      // nothing to reduce a level off, so being sabotaged just skips it outright.
+      const picked = sabotage > 0 ? null : pickRandom(medicPool(state, side), state.battleRng);
       if (picked) {
-        const target = picked.car;
-        target.hp = Math.max(1, Math.ceil(target.maxHp / 2));
-        log.push(`${side}'s medic revives their junked ${target.type}`);
+        const revived = picked.car;
+        revived.hp = Math.max(1, Math.ceil(revived.maxHp / 2));
+        log.push(`${side}'s medic revives their junked ${revived.type}`);
         events.push({
           kind: 'revive',
           attackerSide: side,
           attackerCarId: car.id,
           targetSide: side,
-          amount: target.hp,
+          amount: revived.hp,
           hitKind: 'car',
-          hitCarId: target.id,
+          hitCarId: revived.id,
           junked: false,
-          targetHpAfter: target.hp,
+          targetHpAfter: revived.hp,
           hpAfter: computeHp(state, side).hp,
         });
+      }
+    } else if (car.type === 'saboteur') {
+      // Not upgradable (see UPGRADABLE_TYPES) - always exactly one sabotage
+      // attempt per round, same reasoning as Medic. A sabotaged Saboteur
+      // doesn't get to sabotage anyone this round either. Never targets the
+      // engine - only ever an enemy car.
+      const picked = sabotage > 0 ? null : pickRandom(saboteurPool(state, target), state.battleRng);
+      if (picked) {
+        const victim = picked.car;
+        victim.disabledThisRound = (victim.disabledThisRound || 0) + 1;
+        log.push(`${side}'s saboteur sabotages ${target}'s ${victim.type}`);
       }
     }
   }

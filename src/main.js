@@ -151,6 +151,7 @@ function pendingCarFor(cardId, target) {
   if (cardId === 'armor') return { type: 'armor', shieldRolls: 1, pending: true, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
   if (cardId === 'repair') return { type: 'repair', healPerRound: 1, pending: true, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
   if (cardId === 'medic') return { type: 'medic', pending: true, hp: CARDS.medic.maxHp, maxHp: CARDS.medic.maxHp };
+  if (cardId === 'saboteur') return { type: 'saboteur', pending: true, hp: CARDS.saboteur.maxHp, maxHp: CARDS.saboteur.maxHp };
   if (cardId === 'claw') return { type: 'claw', pending: true, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
   return null;
 }
@@ -492,6 +493,7 @@ function carStatText(car, { junk = false, awaitingPlacementAim = false, spent = 
   if (car.type === 'armor') return car.shieldRolls > 1 ? `${car.shieldRolls}x shield/rd` : '1x shield/rd';
   if (car.type === 'claw') return awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
   if (car.type === 'medic') return 'revives 1/rd';
+  if (car.type === 'saboteur') return 'sabotages 1/rd';
   return `+${car.healPerRound}/rd`;
 }
 
@@ -529,10 +531,17 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo, isMine) {
     // actually run, which can't happen until the opponent's play is known too.
     const upgradePreview = myStagedUpgradePreview();
     const previewingThisUpgrade = upgradePreview && upgradePreview.carId === car.id;
-    const dmgPerRound = previewingThisUpgrade && upgradePreview.dmgPerRound != null ? upgradePreview.dmgPerRound : car.dmgPerRound;
-    const shieldRolls = previewingThisUpgrade && upgradePreview.shieldRolls != null ? upgradePreview.shieldRolls : car.shieldRolls;
-    const healPerRound = previewingThisUpgrade && upgradePreview.healPerRound != null ? upgradePreview.healPerRound : car.healPerRound;
+    const rawDmgPerRound = previewingThisUpgrade && upgradePreview.dmgPerRound != null ? upgradePreview.dmgPerRound : car.dmgPerRound;
+    const rawShieldRolls = previewingThisUpgrade && upgradePreview.shieldRolls != null ? upgradePreview.shieldRolls : car.shieldRolls;
+    const rawHealPerRound = previewingThisUpgrade && upgradePreview.healPerRound != null ? upgradePreview.healPerRound : car.healPerRound;
     const maxHp = previewingThisUpgrade ? upgradePreview.maxHp : car.maxHp;
+    // Sabotage knocks a level off whatever the car would otherwise do this
+    // round (see resolveTrigger) - reflect that same reduction here so the
+    // stat line shown never overstates what's actually about to happen.
+    const sabotage = car.disabledThisRound || 0;
+    const dmgPerRound = Math.max(0, (rawDmgPerRound ?? 0) - sabotage);
+    const shieldRolls = Math.max(0, (rawShieldRolls ?? 0) - sabotage);
+    const healPerRound = Math.max(0, (rawHealPerRound ?? 0) - sabotage);
     const stat = carStatText({ type: car.type, dmgPerRound, shieldRolls, healPerRound }, { junk, awaitingPlacementAim, spent });
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
     box.appendChild(hpDots(hp, maxHp));

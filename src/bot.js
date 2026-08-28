@@ -12,6 +12,7 @@ function carValue(car) {
   else if (car.type === 'armor') base = car.shieldRolls * 2;
   else if (car.type === 'repair') base = car.healPerRound * 2.5;
   else if (car.type === 'medic') base = 2.5; // flat - it doesn't scale, there's no shieldRolls-style stat to read
+  else if (car.type === 'saboteur') base = 2.5; // flat, same reasoning
   // A car close to dying on its own is worth less to spend a card removing.
   return base * (car.hp / car.maxHp);
 }
@@ -63,6 +64,12 @@ function scorePlay(state, side, cardId) {
       // much more with an actual junked car to bring back this round.
       const hasJunked = state[side].cars.some((c) => c.hp <= 0);
       return { score: hasJunked ? 5 : 1.5, target: null };
+    }
+    case 'saboteur': {
+      // Not upgradable - always couples a fresh one, never a target. Unlike
+      // Medic it's useful every round (there's almost always some enemy car
+      // to knock down a level), so it doesn't need a board-state gate.
+      return { score: 3.5, target: null };
     }
     case 'claw': {
       const target = bestTarget(state[opp].cars, targets);

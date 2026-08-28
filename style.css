@@ -490,6 +490,11 @@ input:focus {
   background: #33212a;
 }
 
+.car-box.saboteur {
+  border-color: rgba(210, 190, 90, 0.55);
+  background: #302c18;
+}
+
 .car-box.claw {
   border-color: rgba(190, 130, 230, 0.55);
   background: #2a2036;
