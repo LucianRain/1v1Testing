@@ -368,23 +368,25 @@ function fullTriggerOrder(state) {
   return ranked;
 }
 
-// A living, coupled, unshielded car is a candidate for a random hit - a
-// junked car (0 HP) is never picked, so no shot is ever wasted on something
-// already destroyed. The Engine is the last thing standing: it's only a
-// valid hit target once every coupled car on that side has been killed (or
-// is shielded). A car shielded either by the Shield card (protected) or by
-// an Armor Car's passive pick (shieldedThisRound) can't be hit at all.
+// A living, coupled car is a candidate for a random hit - a junked car (0
+// HP) is never picked, so no shot is ever wasted on something already
+// destroyed. The Engine is the last thing standing: it's only a valid hit
+// target once every coupled car on that side has been killed. Shielded cars
+// (protected, or Armor's shieldedThisRound) are NOT excluded here - they can
+// still be picked, but applyHit deals no damage when one is (see below).
+// That's deliberate: it gives Shield a chance to fully waste an incoming
+// shot instead of just guaranteeing the damage always lands on someone else.
 function hittablePool(state, side) {
-  const livingCars = state[side].cars.filter((c) => c.hp > 0 && !c.protected && !c.shieldedThisRound).map((car) => ({ kind: 'car', car }));
+  const livingCars = state[side].cars.filter((c) => c.hp > 0).map((car) => ({ kind: 'car', car }));
   if (livingCars.length > 0) return livingCars;
-  return state[side].engine.hp > 0 && !state[side].engine.shieldedThisRound ? [{ kind: 'engine' }] : [];
+  return state[side].engine.hp > 0 ? [{ kind: 'engine' }] : [];
 }
 
-// Sniper Cars hunt the Wrecking Car first - if one is still alive and
-// unshielded on the target side, that's the only candidate; otherwise falls
-// back to the usual living-cars-then-engine pool.
+// Sniper Cars hunt the Wrecking Car first - if one is still alive on the
+// target side, that's the only candidate; otherwise falls back to the usual
+// living-cars-then-engine pool.
 function hittablePoolPreferClaw(state, side) {
-  const livingClaws = state[side].cars.filter((c) => c.type === 'claw' && c.hp > 0 && !c.protected && !c.shieldedThisRound).map((car) => ({ kind: 'car', car }));
+  const livingClaws = state[side].cars.filter((c) => c.type === 'claw' && c.hp > 0).map((car) => ({ kind: 'car', car }));
   if (livingClaws.length > 0) return livingClaws;
   return hittablePool(state, side);
 }
@@ -414,9 +416,14 @@ function pickRandom(pool, rng) {
 // A single hit against a target side: an available armor car absorbs it
 // entirely (one charge, falls off once spent) - otherwise it lands on
 // whichever car (or the engine) the shared battle RNG randomly picks among
-// what's still standing. Records a structured event so the UI can replay the
-// sequence hit by hit - e.g. firing a projectile at the actual car it hit,
-// and only revealing the damage once it "lands".
+// what's still standing, Shielded or not. If what it lands on happens to be
+// Shielded (the Shield card's protected, or an Armor Car's passive
+// shieldedThisRound pick), the shot is simply wasted - no damage to anyone,
+// giving Shield a real chance to fully negate a hit rather than just always
+// pushing the same total damage onto someone else. Records a structured
+// event so the UI can replay the sequence hit by hit - e.g. firing a
+// projectile at the actual car it hit, and only revealing the result once
+// it "lands".
 function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId, ignoresArmor = false, poolBuilder = hittablePool) {
   if (amount <= 0) return;
 
@@ -429,6 +436,7 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
   let hitKind = null; // 'engine' | 'car' | null (blocked, or nothing left standing)
   let hitCarId = null;
   let junked = false;
+  let shielded = false; // hit landed on a Shielded target - no damage dealt
   let targetHpAfter = null; // the specific engine/car's own HP after this hit
 
   if (armorCar) {
@@ -441,18 +449,30 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
   } else {
     const picked = pickRandom(poolBuilder(state, targetSide), state.battleRng);
     if (picked && picked.kind === 'engine') {
-      state[targetSide].engine.hp = Math.max(0, state[targetSide].engine.hp - amount);
       hitKind = 'engine';
-      targetHpAfter = state[targetSide].engine.hp;
-      log.push(`${targetSide}'s engine takes ${amount} damage from ${sourceLabel}`);
+      shielded = state[targetSide].engine.shieldedThisRound;
+      if (shielded) {
+        targetHpAfter = state[targetSide].engine.hp;
+        log.push(`${targetSide}'s shielded engine takes no damage from ${sourceLabel}`);
+      } else {
+        state[targetSide].engine.hp = Math.max(0, state[targetSide].engine.hp - amount);
+        targetHpAfter = state[targetSide].engine.hp;
+        log.push(`${targetSide}'s engine takes ${amount} damage from ${sourceLabel}`);
+      }
     } else if (picked) {
       const car = picked.car;
-      car.hp = Math.max(0, car.hp - amount);
       hitKind = 'car';
       hitCarId = car.id;
-      junked = car.hp <= 0;
-      targetHpAfter = car.hp;
-      log.push(`${targetSide}'s ${car.type} takes ${amount} damage from ${sourceLabel}${junked ? ' and is junked' : ''}`);
+      shielded = car.protected || car.shieldedThisRound;
+      if (shielded) {
+        targetHpAfter = car.hp;
+        log.push(`${targetSide}'s shielded ${car.type} takes no damage from ${sourceLabel}`);
+      } else {
+        car.hp = Math.max(0, car.hp - amount);
+        junked = car.hp <= 0;
+        targetHpAfter = car.hp;
+        log.push(`${targetSide}'s ${car.type} takes ${amount} damage from ${sourceLabel}${junked ? ' and is junked' : ''}`);
+      }
     }
   }
 
@@ -467,6 +487,7 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     hitKind,
     hitCarId,
     junked,
+    shielded,
     targetHpAfter,
     hpAfter: computeHp(state, targetSide).hp,
   });
