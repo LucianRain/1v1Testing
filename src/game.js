@@ -24,17 +24,17 @@ export const CARDS = {
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: 'Knocks an enemy car down a level for a round.' },
   armor: { name: 'Shield', target: null, persistent: true, maxHp: 2, desc: '2 HP. Shields a random car each round.' },
   repair: { name: 'Repair', target: null, persistent: true, maxHp: 1, desc: '1 HP. Heals 1 HP/round.' },
-  medic: { name: 'Medic', target: null, persistent: true, maxHp: 1, desc: '1 HP. Revives a junked car each round.' },
+  medic: { name: 'Medic', target: null, persistent: true, maxHp: 2, desc: '2 HP. Revives a junked car each round.' },
   saboteur: { name: 'Saboteur', target: null, persistent: true, maxHp: 1, desc: '1 HP. Sabotages a random enemy car each round.' },
-  refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heals or revives a car.' },
 };
 
 const CARD_IDS = Object.keys(CARDS);
 // The Wrecking Car, Sniper Car, and Sabotage are pulled from the draw pool
 // for now (not deleted from CARDS - their mechanics and rendering stay
-// intact in case they come back). The Shield card (reinforce) is gone for
-// good, not just undrawable - Armor's own passive shield makes it
-// redundant, so there's no reason to keep a separate one-round version around.
+// intact in case they come back). The Shield card (reinforce) and Refresh
+// are gone for good, not just undrawable - Armor's own passive shield and
+// Medic's own passive revive both make their one-shot equivalents
+// redundant, so there's no reason to keep either standalone version around.
 const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'sabotage');
 
 // mulberry32 - small deterministic PRNG, good enough for shuffling a fair deck.
@@ -154,9 +154,10 @@ export function createMatchState(battleSeed = 0) {
 
 // A side's total remaining HP vs. its total possible HP right now (engine +
 // every coupled car, junked or not - a junked car still counts toward the
-// max, which is what makes it worth reviving with Refresh). The train's
-// total capacity grows as more cars couple on, and shrinks permanently only
-// when a car is actually removed (a Wrecking Car kill), not merely junked.
+// max, which is what makes it worth reviving with Medic or an upgrade).
+// The train's total capacity grows as more cars couple on, and shrinks
+// permanently only when a car is actually removed (a Wrecking Car kill),
+// not merely junked.
 export function computeHp(state, side) {
   let hp = state[side].engine.hp;
   let maxHp = state[side].engine.maxHp;
@@ -211,7 +212,8 @@ export function isSpent(car) {
 }
 
 // A car that's been shot to 0 HP: it no longer does anything (no damage, no
-// healing, no blocking) and can't be targeted by any card except Refresh.
+// healing, no blocking) - it can only come back via Medic's passive revive
+// or a duplicate upgrade play targeting it directly.
 export function isJunk(car) {
   return car.hp <= 0;
 }
@@ -225,22 +227,17 @@ export function validTargets(state, side, cardId) {
     if (cardId === 'claw') targets = targets.filter((c) => !c.justCoupled);
     return targets.map((c) => c.id);
   }
-  if (card.target === 'own_car') {
-    if (cardId === 'refresh') {
-      // Anything not at full HP (damaged or junked).
-      return state[side].cars.filter((c) => c.hp < c.maxHp).map((c) => c.id);
-    }
-    return state[side].cars.map((c) => c.id);
-  }
+  // No card targets its own train anymore (Refresh and the Shield card
+  // both did, once) - everything else is either untargeted (couples on and
+  // acts passively) or targets an enemy car above.
   return [];
 }
 
 const SIDES = ['host', 'client'];
 
 // Round resolution is split into two stages so the UI can animate each one
-// separately: setup (sabotage/reinforce/refresh + new cars coupling on or
-// merging into an existing upgrade, including a Wrecking Car firing the
-// instant it couples)
+// separately: setup (sabotage + new cars coupling on or merging into an
+// existing upgrade, including a Wrecking Car firing the instant it couples)
 // resolves first, then the trigger phase (every car's own recurring effect).
 // Each stage mutates `state` in place and returns its own log lines; run
 // identically on both peers.
@@ -249,13 +246,11 @@ export function resolveSetup(state, plays) {
   const log = [];
   const wrecks = []; // { attackerSide, attackerCarId, targetSide, targetCarId, targetCarSnapshot, targetIndex }
 
-  // The Shield card protects for exactly one round: whatever a car had
-  // going into this round expires now, before this round's own Shield plays
-  // (if any) are applied below. Same for last round's passive Armor shields
-  // (shieldedThisRound) - cleared here, right before this round's Armor
-  // Cars roll fresh ones, rather than at the end of last round's trigger
-  // phase, so the flag stays visible on screen for the whole round it
-  // actually applied to instead of disappearing before anything ever renders.
+  // Last round's passive Armor shields (shieldedThisRound) are cleared here,
+  // right before this round's Armor Cars roll fresh ones, rather than at
+  // the end of last round's trigger phase - that way the flag stays visible
+  // on screen for the whole round it actually applied to, instead of
+  // disappearing before anything ever renders.
   for (const s of SIDES) {
     state[s].engine.shieldedThisRound = false;
     for (const car of state[s].cars) {
@@ -266,8 +261,8 @@ export function resolveSetup(state, plays) {
   }
   for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
 
-  // sabotage / refresh - claw, and Upgrade's drag-onto-self effect for the
-  // other coupling cards, are handled below, alongside the other cars that
+  // Sabotage - claw, and Upgrade's drag-onto-self effect for the other
+  // coupling cards, are handled below, alongside the other cars that
   // couple onto the train.
   for (const s of SIDES) {
     const play = plays[s];
@@ -280,19 +275,6 @@ export function resolveSetup(state, plays) {
         // with the Saboteur car's own passive if both land on the same car.
         car.disabledThisRound = (car.disabledThisRound || 0) + 1;
         log.push(`${s} sabotages ${opp}'s ${car.type}`);
-      }
-    } else if (play.card === 'refresh') {
-      const car = findCar(state[s].cars, play.target);
-      if (car) {
-        if (car.hp <= 0) {
-          // Destroyed (junked): a partial revival - it doesn't undo whatever
-          // already happened to it, a fired Wrecking Car stays fired/spent.
-          car.hp = Math.max(1, Math.ceil(car.maxHp / 2));
-          log.push(`${s} revives their junked ${car.type}`);
-        } else if (car.hp < car.maxHp) {
-          car.hp = car.maxHp;
-          log.push(`${s} refreshes their ${car.type} to full health`);
-        }
       }
     }
   }

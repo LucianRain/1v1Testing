@@ -81,7 +81,7 @@ let myPlay = null;
 let oppPlay = null;
 // Flips true the instant this round's resolveSetup() actually runs (both
 // plays known) - the "my own play resolved instantly" previews below
-// (myStagedFlagPreviews/myStagedRefreshPreview/myStagedUpgradePreview) all
+// (myStagedFlagPreviews/myStagedUpgradePreview) all
 // stop applying once this is true, since matchState itself is now the real,
 // already-resolved source of truth and re-applying a preview on top of it
 // would double-count (e.g. an upgrade previewing +1 on top of an already
@@ -98,10 +98,10 @@ let myPendingInsertIndex = null; // where in my train that preview goes
 let oppPendingCar = null; // same, for the opponent's just-revealed play
 let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
-let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Refresh, or aiming a placed Wrecking Car)
+let targetDragState = null; // in-progress arc-targeting drag (Sabotage, or aiming a placed Wrecking Car)
 let reorderDragState = null; // { carId, ghost, indicator, insertIndex, overTrain, sourceBoxEl } - in-progress drag of an already-coupled car on my own train, reordering it
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
-let stagedPlay = null; // { cardId, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay).
+let stagedPlay = null; // { cardId, target, insertIndex } - what End Turn submits; null = pass. The card already left myHand (see stagePlay).
 // The card id a play just removed from myHand - set the instant it's
 // staged, and outlives stagedPlay/myPlay (which both go back to null well
 // before the round actually resolves) all the way through to finishRound,
@@ -190,7 +190,7 @@ net.addEventListener('data', (e) => {
   if (msg.t === 'init') {
     startMatch(msg.seed);
   } else if (msg.t === 'play') {
-    handleOppPlayKnown(msg.card, msg.target, msg.insertIndex, msg.refreshTarget);
+    handleOppPlayKnown(msg.card, msg.target, msg.insertIndex);
   } else if (msg.t === 'reorder') {
     // The opponent freely reordered their own train - mirror it onto my
     // copy of their side so both peers stay in the same trigger order.
@@ -265,11 +265,9 @@ function renderHp(labelEl, fillEl, hp, maxHp) {
 
 // A car/engine's own HP, honoring the trigger-phase reveal gating (see
 // hpRevealOverride) - falls back to the live matchState value otherwise. A
-// staged/committed Refresh or upgrade/revive on this car previews instantly, ahead of both.
+// staged/committed upgrade/revive on this car previews instantly, ahead of both.
 function displayCarHp(car) {
   if (hpRevealOverride) return hpRevealOverride.carHp.get(car.id) ?? car.hp;
-  const refreshPreview = myStagedRefreshPreview();
-  if (refreshPreview && refreshPreview.carId === car.id) return refreshPreview.hp;
   const upgradePreview = myStagedUpgradePreview();
   if (upgradePreview && upgradePreview.carId === car.id) return upgradePreview.hp;
   return car.hp;
@@ -429,20 +427,6 @@ function myStagedFlagPreviews() {
   }
   if (play.cardId === 'sabotage') return { mine: null, opp: { target: play.target, flag: 'disabled' } };
   return { mine: null, opp: null };
-}
-
-// Same "show my own action instantly" idea as myStagedFlagPreviews, but for
-// Refresh's HP/charge change rather than a flag overlay - mirrors exactly
-// what resolveSetup's refresh handling will actually do once resolution
-// runs, so there's nothing to reconcile once matchState catches up.
-function myStagedRefreshPreview() {
-  if (setupResolved) return null;
-  const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
-  if (!play || play.cardId !== 'refresh') return null;
-  const car = matchState[myRole].cars.find((c) => c.id === play.target);
-  if (!car) return null;
-  const hp = car.hp <= 0 ? Math.max(1, Math.ceil(car.maxHp / 2)) : car.maxHp;
-  return { carId: car.id, hp };
 }
 
 // Same idea again, for dragging an upgrade card onto an existing car of mine
@@ -749,11 +733,11 @@ function renderHand() {
     btn.disabled = disabled;
     btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
     if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
-    if (cardId === 'sabotage' || cardId === 'refresh') {
-      // Drag out an arcing targeting reticle at the target car (enemy for
-      // Sabotage, your own for Refresh) instead of a two-step click. Refresh
-      // on a spent Wrecking Car chains into a second drag to re-aim it - see
-      // startTargetedCardDrag.
+    if (cardId === 'sabotage') {
+      // Drag out an arcing targeting reticle at the target enemy car
+      // instead of a two-step click - see startTargetedCardDrag. Sabotage
+      // is the only remaining non-persistent card (Shield and Refresh are
+      // both gone), so this is the only branch that ever actually runs here.
       btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startTargetedCardDrag(e, cardId, idx, btn));
     } else {
@@ -1090,10 +1074,10 @@ function onTargetDragEnd(e) {
   onComplete(targetId);
 }
 
-// Shared by any targeted, non-coupling card (Sabotage, Refresh): drag an
-// arcing reticle out from the hand card and release over a highlighted car
-// - own or enemy, whichever validTargets() says this card can hit - instead
-// of a plain click-to-target.
+// For any targeted, non-coupling card (just Sabotage now): drag an arcing
+// reticle out from the hand card and release over a highlighted enemy car
+// - whichever validTargets() says this card can hit - instead of a plain
+// click-to-target.
 function startTargetedCardDrag(e, cardId, handIdx, sourceBtn) {
   if (sourceBtn.disabled || dragState || targetDragState) return;
   pendingPlay = { cardId, handIdx };
@@ -1153,7 +1137,7 @@ btnPass.addEventListener('click', endTurn);
 
 // Cleanly cancels whatever mid-flight (not-yet-staged) interaction the
 // player was in - a train-car drag, an arc-targeting drag, or a Wrecking
-// Car/Refresh placement that's been dropped but not yet aimed - so ending
+// Car placement that's been dropped but not yet aimed - so ending
 // the turn can't leave stray state behind. A car that already finished
 // staging (myPendingCar with no aim still pending) is left alone; that's
 // what's about to be submitted, not something to abandon.
@@ -1225,7 +1209,7 @@ async function endTurn() {
 
   if (staged) {
     endingTurn = false;
-    commitPlay(staged.cardId, staged.target, staged.insertIndex, staged.refreshTarget);
+    commitPlay(staged.cardId, staged.target, staged.insertIndex);
     return;
   }
 
@@ -1276,8 +1260,8 @@ function updateTurnTimerDisplay() {
 function playBotTurn() {
   const botChoice = chooseBotPlay(matchState, oppRole, botHand);
   botHand.splice(botHand.indexOf(botChoice.card), 1);
-  // bot always appends at the engine end; refreshTarget only matters when reviving a Wrecking Car
-  handleOppPlayKnown(botChoice.card, botChoice.target, null, botChoice.refreshTarget);
+  // bot always appends at the engine end
+  handleOppPlayKnown(botChoice.card, botChoice.target, null);
 }
 
 // Records a choice locally without ending the turn: no network send yet -
@@ -1285,11 +1269,10 @@ function playBotTurn() {
 // choice itself is locked in immediately: the card leaves the hand right
 // here, and the rest of the hand disables (see renderHand's handLocked), so
 // there's no going back to play something else instead.
-function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
+function stagePlay(cardId, handIdx, target, insertIndex) {
   insertIndex = insertIndex ?? null;
-  refreshTarget = refreshTarget ?? null;
   myHand.splice(handIdx, 1);
-  stagedPlay = { cardId, target, insertIndex, refreshTarget };
+  stagedPlay = { cardId, target, insertIndex };
   vacatedCardId = cardId;
   myPendingCar = pendingCarFor(cardId, target);
   myPendingInsertIndex = insertIndex;
@@ -1301,10 +1284,9 @@ function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
 // Actually submits a play over the network and starts resolution. Only ever
 // called once per round, from endTurn() - never directly from a hand
 // interaction anymore. The card already left myHand back in stagePlay.
-function commitPlay(cardId, target, insertIndex, refreshTarget) {
+function commitPlay(cardId, target, insertIndex) {
   insertIndex = insertIndex ?? null;
-  refreshTarget = refreshTarget ?? null;
-  myPlay = { card: cardId, target, insertIndex, refreshTarget };
+  myPlay = { card: cardId, target, insertIndex };
   myPendingCar = pendingCarFor(cardId, target);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
@@ -1314,7 +1296,7 @@ function commitPlay(cardId, target, insertIndex, refreshTarget) {
   if (vsBot) {
     setTimeout(playBotTurn, BOT_DELAY_MS);
   } else {
-    net.send({ t: 'play', card: cardId, target, insertIndex, refreshTarget });
+    net.send({ t: 'play', card: cardId, target, insertIndex });
     runResolution();
   }
 }
@@ -1322,10 +1304,9 @@ function commitPlay(cardId, target, insertIndex, refreshTarget) {
 // Opponent's play is known (bot decided, or a networked message arrived).
 // No reveal popup, and nothing about their train previews on screen until
 // my own play is also locked in - see revealOppPendingIfReady().
-function handleOppPlayKnown(cardId, target, insertIndex, refreshTarget) {
+function handleOppPlayKnown(cardId, target, insertIndex) {
   insertIndex = insertIndex ?? null;
-  refreshTarget = refreshTarget ?? null;
-  oppPlay = { card: cardId, target, insertIndex, refreshTarget };
+  oppPlay = { card: cardId, target, insertIndex };
   revealOppPendingIfReady();
   runResolution();
 }

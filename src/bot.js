@@ -79,10 +79,6 @@ function scorePlay(state, side, cardId) {
       const target = bestTarget(state[opp].cars, targets);
       return { score: carValue(state[opp].cars.find((c) => c.id === target)) * 0.5, target };
     }
-    case 'refresh': {
-      const incoming = state[opp].cars.filter((c) => c.type === 'wagon').reduce((a, c) => a + c.dmgPerRound, 0);
-      return { score: 2 + incoming * 1.2, target: targets[0] };
-    }
     default:
       return { score: -Infinity, target: null };
   }
@@ -92,10 +88,10 @@ export function chooseBotPlay(state, side, hand) {
   let best = null;
   let bestScore = -Infinity;
   for (const cardId of hand) {
-    const { score, target, refreshTarget } = scorePlay(state, side, cardId);
+    const { score, target } = scorePlay(state, side, cardId);
     if (score > bestScore) {
       bestScore = score;
-      best = { card: cardId, target, refreshTarget };
+      best = { card: cardId, target };
     }
   }
   return best || { card: hand[0], target: null };
