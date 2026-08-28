@@ -77,6 +77,14 @@ let myDeck = null;
 let myHand = [];
 let myPlay = null;
 let oppPlay = null;
+// Flips true the instant this round's resolveSetup() actually runs (both
+// plays known) - the "my own play resolved instantly" previews below
+// (myStagedFlagPreviews/myStagedRefreshPreview/myStagedUpgradePreview) all
+// stop applying once this is true, since matchState itself is now the real,
+// already-resolved source of truth and re-applying a preview on top of it
+// would double-count (e.g. an upgrade previewing +1 on top of an already
+// +1'd dmgPerRound). Reset to false wherever myPlay/oppPlay go back to null.
+let setupResolved = false;
 let gameOver = false;
 let resolving = false;
 let vsBot = false;
@@ -192,6 +200,7 @@ function startMatch(seed) {
   }
   myPlay = null;
   oppPlay = null;
+  setupResolved = false;
   myPendingCar = null;
   myPendingInsertIndex = null;
   oppPendingCar = null;
@@ -236,11 +245,13 @@ function renderHp(labelEl, fillEl, hp, maxHp) {
 
 // A car/engine's own HP, honoring the trigger-phase reveal gating (see
 // hpRevealOverride) - falls back to the live matchState value otherwise. A
-// staged/committed Refresh on this car previews instantly, ahead of both.
+// staged/committed Refresh or upgrade/revive on this car previews instantly, ahead of both.
 function displayCarHp(car) {
   if (hpRevealOverride) return hpRevealOverride.carHp.get(car.id) ?? car.hp;
   const refreshPreview = myStagedRefreshPreview();
   if (refreshPreview && refreshPreview.carId === car.id) return refreshPreview.hp;
+  const upgradePreview = myStagedUpgradePreview();
+  if (upgradePreview && upgradePreview.carId === car.id) return upgradePreview.hp;
   return car.hp;
 }
 function displayEngineHp(side) {
@@ -390,6 +401,7 @@ function positionTrain(trainEl, trackEl, hp, maxHp, lastWidth) {
 // both sides have committed (see revealOppPendingIfReady()), even though
 // Sabotage's target lands on their train from my perspective.
 function myStagedFlagPreviews() {
+  if (setupResolved) return { mine: null, opp: null };
   const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
   if (!play) return { mine: null, opp: null };
   if (UPGRADABLE_TYPES.includes(play.cardId) && play.target != null) {
@@ -405,12 +417,34 @@ function myStagedFlagPreviews() {
 // what resolveSetup's refresh handling will actually do once resolution
 // runs, so there's nothing to reconcile once matchState catches up.
 function myStagedRefreshPreview() {
+  if (setupResolved) return null;
   const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
   if (!play || play.cardId !== 'refresh') return null;
   const car = matchState[myRole].cars.find((c) => c.id === play.target);
   if (!car) return null;
   const hp = car.hp <= 0 ? Math.max(1, Math.ceil(car.maxHp / 2)) : car.maxHp;
   return { carId: car.id, hp };
+}
+
+// Same idea again, for dragging an upgrade card onto an existing car of mine
+// (or reviving a junked one) - mirrors resolveSetup's merge/revive branch
+// exactly, so the HP dots, stat line, and upgrade-level flag count all show
+// the resolved result the instant I commit, rather than only once
+// resolveSetup actually runs (which can't happen until the opponent's own
+// play is known too, and would otherwise look like nothing happened until
+// the trigger phase starts).
+function myStagedUpgradePreview() {
+  if (setupResolved) return null;
+  const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
+  if (!play || !UPGRADABLE_TYPES.includes(play.cardId) || play.target == null) return null;
+  const car = matchState[myRole].cars.find((c) => c.id === play.target);
+  if (!car) return null;
+  const reviving = car.hp <= 0;
+  const preview = { carId: car.id, hp: reviving ? car.maxHp : car.hp, upgradeLevel: reviving ? 1 : (car.upgradeLevel || 0) + 1 };
+  if (car.type === 'wagon' || car.type === 'sniper') preview.dmgPerRound = reviving ? 2 : car.dmgPerRound + 1;
+  if (car.type === 'armor') preview.shieldRolls = reviving ? 2 : car.shieldRolls + 1;
+  if (car.type === 'repair') preview.healPerRound = reviving ? 2 : car.healPerRound + 1;
+  return preview;
 }
 
 // One dot per point of max HP - bright red for HP still remaining, dark red
@@ -439,21 +473,31 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
     const awaitingPlacementAim = car.pending && car.needsAim;
     box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}${junk ? ' junk' : spent ? ' spent' : ''}`;
     if (car.id != null) box.dataset.carId = car.id;
+    // A staged/committed upgrade or merge-revive onto this car previews its
+    // resolved dmgPerRound/shieldRolls/healPerRound/upgradeLevel instantly
+    // (see myStagedUpgradePreview) rather than waiting for resolveSetup to
+    // actually run, which can't happen until the opponent's play is known too.
+    const upgradePreview = myStagedUpgradePreview();
+    const previewingThisUpgrade = upgradePreview && upgradePreview.carId === car.id;
+    const dmgPerRound = previewingThisUpgrade && upgradePreview.dmgPerRound != null ? upgradePreview.dmgPerRound : car.dmgPerRound;
+    const shieldRolls = previewingThisUpgrade && upgradePreview.shieldRolls != null ? upgradePreview.shieldRolls : car.shieldRolls;
+    const healPerRound = previewingThisUpgrade && upgradePreview.healPerRound != null ? upgradePreview.healPerRound : car.healPerRound;
     let stat;
     if (junk) stat = 'junk';
-    else if (car.type === 'wagon') stat = car.dmgPerRound > 1 ? `${car.dmgPerRound} shots/rd` : '1 shot/rd';
-    else if (car.type === 'sniper') stat = `${car.dmgPerRound}/rd · pierces`;
-    else if (car.type === 'armor') stat = car.shieldRolls > 1 ? `${car.shieldRolls}x shield/rd` : '1x shield/rd';
+    else if (car.type === 'wagon') stat = dmgPerRound > 1 ? `${dmgPerRound} shots/rd` : '1 shot/rd';
+    else if (car.type === 'sniper') stat = `${dmgPerRound}/rd · pierces`;
+    else if (car.type === 'armor') stat = shieldRolls > 1 ? `${shieldRolls}x shield/rd` : '1x shield/rd';
     else if (car.type === 'claw') stat = awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
-    else stat = `+${car.healPerRound}/rd`;
+    else stat = `+${healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
     box.appendChild(hpDots(hp, car.maxHp));
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
     // One upgrade = one flag - a car upgraded multiple times (via Upgrade,
     // merging in a duplicate, or both) shows one stacked flag per level. A
-    // staged-but-not-yet-resolved Upgrade/merge previews as current+1.
-    const currentLevel = car.upgradeLevel || 0;
-    const overchargeCount = previewFlag === 'overcharge' ? currentLevel + 1 : currentLevel;
+    // staged-but-not-yet-resolved Upgrade/merge previews its resolved level
+    // (which resets to 1 rather than stacking, if this car is being revived
+    // from junk - see myStagedUpgradePreview).
+    const overchargeCount = previewingThisUpgrade ? upgradePreview.upgradeLevel : car.upgradeLevel || 0;
     const showShield =
       car.protected ||
       car.shieldedThisRound ||
@@ -1024,6 +1068,7 @@ async function runResolution() {
   };
 
   const setup = resolveSetup(matchState, plays); // fully resolved now, including any Wrecking Car destroys
+  setupResolved = true; // stop previewing my own play - matchState already reflects it for real now
   myPendingCar = null;
   myPendingInsertIndex = null;
   oppPendingCar = null;
@@ -1291,6 +1336,7 @@ function finishRound(plays) {
     resolving = false;
     myPlay = null;
     oppPlay = null;
+    setupResolved = false;
     myResolvedClawId = null;
     oppResolvedClawId = null;
     render();
@@ -1303,6 +1349,7 @@ function finishRound(plays) {
     resolving = false;
     myPlay = null;
     oppPlay = null;
+    setupResolved = false;
     myResolvedClawId = null;
     oppResolvedClawId = null;
     render();
