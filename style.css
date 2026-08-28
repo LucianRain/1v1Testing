@@ -778,6 +778,13 @@ input:focus {
   cursor: grab;
 }
 
+/* A played card's vacated slot - keeps its exact box in the hand row so the
+   remaining card(s) don't resize or shift into the empty space. */
+.card-btn.placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .card-ghost {
   position: fixed;
   top: 0;

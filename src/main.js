@@ -69,6 +69,7 @@ const WRECK_PULL_MS = 900; // pull + derail + freeze + fade, one combined animat
 const SHIELD_PULSE_MS = 260; // a shield icon pulses once it absorbs a hit...
 const SHIELD_BREAK_MS = 380; // ...then shatters, right before the shield actually lifts
 const TURN_TIME_MS = 15000; // how long you have to act before your turn auto-passes
+const HAND_SIZE = 2; // matches game.js's redrawHand default - always exactly this many slots
 
 let myRole = null; // 'host' | 'client'
 let oppRole = null;
@@ -98,7 +99,7 @@ let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
 let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Overcharge/Reinforce, or aiming a placed Wrecking Car)
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
-let stagedPlay = null; // { cardId, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay).
+let stagedPlay = null; // { cardId, handIdx, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay); handIdx is only kept around so renderHand can hold that slot's layout in place.
 let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
@@ -608,7 +609,28 @@ function renderHand() {
   // the rest of the hand locks too, so there's no changing your mind about
   // which card to play. End Turn itself stays enabled so it can submit it.
   const handLocked = locked || !!stagedPlay;
-  myHand.forEach((cardId, idx) => {
+
+  // Always lay out exactly HAND_SIZE slots so the remaining card(s) never
+  // resize or reposition once one is played - the vacated slot (already
+  // spliced out of myHand in stagePlay) renders as an invisible placeholder
+  // in its original spot instead of collapsing the layout around it.
+  const slots = [];
+  if (stagedPlay) {
+    let nextRealIdx = 0;
+    for (let slot = 0; slot < HAND_SIZE; slot++) {
+      slots.push(slot === stagedPlay.handIdx ? null : myHand[nextRealIdx++]);
+    }
+  } else {
+    for (let slot = 0; slot < HAND_SIZE; slot++) slots.push(myHand[slot] ?? null);
+  }
+
+  slots.forEach((cardId, idx) => {
+    if (cardId == null) {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'card-btn placeholder';
+      handEl.appendChild(placeholder);
+      return;
+    }
     const card = CARDS[cardId];
     const btn = document.createElement('button');
     btn.className = 'card-btn';
@@ -1003,7 +1025,10 @@ function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
   myHand.splice(handIdx, 1);
-  stagedPlay = { cardId, target, insertIndex, refreshTarget };
+  // handIdx is kept here (unused for submitting the play itself) so
+  // renderHand can redraw the vacated slot as an invisible placeholder
+  // rather than letting the remaining card(s) resize/reflow into its spot.
+  stagedPlay = { cardId, handIdx, target, insertIndex, refreshTarget };
   myPendingCar = pendingCarFor(cardId, target);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
