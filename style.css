@@ -817,6 +817,15 @@ input:focus {
   );
 }
 
+.hand-car-box,
+.card-btn {
+  /* Slower than the button-press transform transition (0.1s) - this is the
+     FLIP slide when a persisted hand card moves to a new spot (renderHand),
+     e.g. the kept card shifting over as a new arrival takes the slot beside
+     it. Kept separate from opacity so a disabled-state fade stays snappy. */
+  transition: transform 0.3s ease, opacity 0.1s ease;
+}
+
 .hand-car-box {
   /* No flex-grow - stays exactly as wide as it'll be once coupled on the
      train (.car-box's own width: max-content), not stretched to fill the row. */
