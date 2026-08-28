@@ -351,6 +351,10 @@ input:focus {
 .car-box {
   position: relative;
   width: max-content;
+  /* The 4 wheels are drawn at fixed offsets from each edge (see the ::before
+     /::after rules below) - below this width the two inner wheels would
+     start overlapping each other. */
+  min-width: 90px;
   padding: 8px 12px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.25);
