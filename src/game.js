@@ -61,7 +61,7 @@ export function draw(deck) {
 }
 
 // Passing: shuffle the current hand back into the deck, then draw a fresh one.
-export function redrawHand(deck, hand, handSize = 3) {
+export function redrawHand(deck, hand, handSize = 2) {
   deck.pile = shuffle(deck.pile.concat(hand), deck.rng);
   const newHand = [];
   for (let i = 0; i < handSize; i++) newHand.push(draw(deck));

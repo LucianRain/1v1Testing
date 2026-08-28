@@ -175,11 +175,11 @@ function startMatch(seed) {
   // seed, so their random hit/heal targeting stays in lockstep.
   matchState = createMatchState(deriveSeed(seed, 'battle'));
   myDeck = createDeck(deriveSeed(seed, myRole));
-  myHand = ensureWeapon(myDeck, [draw(myDeck), draw(myDeck), draw(myDeck)]);
+  myHand = ensureWeapon(myDeck, [draw(myDeck), draw(myDeck)]);
   myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
   if (vsBot) {
     botDeck = createDeck(deriveSeed(seed, oppRole));
-    botHand = ensureWeapon(botDeck, [draw(botDeck), draw(botDeck), draw(botDeck)]);
+    botHand = ensureWeapon(botDeck, [draw(botDeck), draw(botDeck)]);
     botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
   }
   myPlay = null;
