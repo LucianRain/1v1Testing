@@ -1,7 +1,6 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner } from './game.js';
+import { CARDS, UPGRADABLE_TYPES, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
-import { MERGE_ON_DUPLICATE } from './config.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
 const gameScreen = document.getElementById('game-screen');
@@ -51,10 +50,6 @@ const net = new PeerNetwork();
 
 const RESUME_ROOM_KEY = 'reroute-hosted-room'; // localStorage: a room I created but nobody had joined yet
 const ROOM_CODE_RE = /^[A-Z]{4}$/; // a plain 4-letter word room code
-// Keep in sync with game.js's own MERGEABLE_TYPES - playing one of these
-// when a living one of the same type is already coupled upgrades it in
-// place instead of coupling a new car (Wrecking Car is exempt).
-const MERGEABLE_HAND_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
 const AUTO_LOBBY_ID = 'reroute-auto-lobby-v1'; // fixed, well-known id: autoMode pairs up whoever reaches it first
 const AUTO_JOIN_TIMEOUT_MS = 4000; // fail fast when trying to join - a real "nobody's here" is near-instant anyway
 const AUTO_RETRY_DELAY_MS = 3000; // how long to wait before retrying when the lobby's already full
@@ -117,11 +112,13 @@ let oppClawWrecked = false;
 let myAimLineEl = null; // persistent SVG line elements for the "targeting" indicator, one per side
 let oppAimLineEl = null;
 
-// Returns null (nothing new to preview) when this play would merge into an
-// existing car of the same type (alive or junked) instead of coupling a new
-// one - see MERGEABLE_HAND_TYPES and game.js's matching resolveSetup logic.
-function pendingCarFor(cardId, side) {
-  if (MERGE_ON_DUPLICATE && MERGEABLE_HAND_TYPES.includes(cardId) && matchState[side].cars.some((c) => c.type === cardId)) {
+// Returns null (nothing new to preview) when this play carries an upgrade
+// target (the player dragged an upgradable card directly onto an existing
+// car of the same type) - it merges into that car instead of coupling a new
+// one, so there's nothing new to show. See UPGRADABLE_TYPES and game.js's
+// matching resolveSetup logic.
+function pendingCarFor(cardId, target) {
+  if (UPGRADABLE_TYPES.includes(cardId) && target != null) {
     return null;
   }
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
@@ -387,7 +384,9 @@ function positionTrain(trainEl, trackEl, hp, maxHp, lastWidth) {
 function myStagedFlagPreviews() {
   const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
   if (!play) return { mine: null, opp: null };
-  if (play.cardId === 'overcharge') return { mine: { target: play.target, flag: 'overcharge' }, opp: null };
+  if (UPGRADABLE_TYPES.includes(play.cardId) && play.target != null) {
+    return { mine: { target: play.target, flag: 'overcharge' }, opp: null };
+  }
   if (play.cardId === 'reinforce') return { mine: { target: play.target, flag: 'shield' }, opp: null };
   if (play.cardId === 'sabotage') return { mine: null, opp: { target: play.target, flag: 'disabled' } };
   return { mine: null, opp: null };
@@ -566,32 +565,24 @@ function renderHand() {
     const disabled = locked || (needsTarget && targets.length === 0);
     btn.disabled = disabled;
     if (stagedPlay && stagedPlay.handIdx === idx) btn.classList.add('staged');
-    const existingOfType = MERGE_ON_DUPLICATE && MERGEABLE_HAND_TYPES.includes(cardId) ? matchState[myRole].cars.find((c) => c.type === cardId) : null;
-    const merging = !!existingOfType;
-    const desc = !existingOfType
-      ? card.desc
-      : existingOfType.hp <= 0
-        ? `${card.desc} - revives your junked one as a level-1 upgrade instead of coupling a new one`
-        : `${card.desc} - you already have one, so this upgrades it instead of coupling a new one`;
+    const desc = UPGRADABLE_TYPES.includes(cardId)
+      ? `${card.desc} - drag onto your own to upgrade it (or revive it, if it's junked), or drop elsewhere for a separate one`
+      : card.desc;
     btn.innerHTML = `<strong>${card.name}</strong><span>${desc}</span>`;
     if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
-    if (card.persistent && merging) {
-      // Already have one of this type, alive or junked - playing it just
-      // merges into that one in place, so there's no position to choose
-      // (see game.js's resolveSetup). A plain click is enough, same as an
-      // untargeted card.
-      btn.addEventListener('click', () => stagePlay(cardId, idx, null));
-    } else if (card.persistent) {
-      // Train cars (wagon/armor/repair/claw): drag onto your train to
-      // choose where in the order it couples on, instead of a plain click.
-      // A Wrecking Car (claw) then needs a second drag - see onCardDragEnd.
+    if (card.persistent) {
+      // Train cars (wagon/armor/repair/claw): drag onto your train to choose
+      // where in the order it couples on, instead of a plain click. For an
+      // upgradable type, dropping directly onto an existing car of the same
+      // type upgrades/revives it instead - see updateDropTarget(). A
+      // Wrecking Car (claw) then needs a second drag - see onCardDragEnd.
       btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startCardDrag(e, cardId, idx, btn));
-    } else if (cardId === 'sabotage' || cardId === 'overcharge' || cardId === 'reinforce' || cardId === 'refresh') {
+    } else if (cardId === 'sabotage' || cardId === 'reinforce' || cardId === 'refresh') {
       // Drag out an arcing targeting reticle at the target car (enemy for
-      // Sabotage, your own for Overcharge/Reinforce/Refresh) instead of a
-      // two-step click. Refresh on a spent Wrecking Car chains into a second
-      // drag to re-aim it - see startTargetedCardDrag.
+      // Sabotage, your own for Reinforce/Refresh) instead of a two-step
+      // click. Refresh on a spent Wrecking Car chains into a second drag to
+      // re-aim it - see startTargetedCardDrag.
       btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startTargetedCardDrag(e, cardId, idx, btn));
     } else {
@@ -610,7 +601,10 @@ function renderHand() {
 // Dragging a train-car hand card: a ghost follows the pointer, and an
 // insertion-line indicator snaps to the nearest gap between your existing
 // cars (or before the first / right before the engine) as you drag over
-// your own train. Dropping off the train cancels the play entirely.
+// your own train. For an upgradable type (see UPGRADABLE_TYPES), dropping
+// directly ON an existing car of the same type upgrades/revives it instead -
+// that car gets a highlight and the gap indicator hides while hovering it.
+// Dropping off the train cancels the play entirely.
 function startCardDrag(e, cardId, handIdx, sourceBtn) {
   if (sourceBtn.disabled || dragState) return;
   e.preventDefault();
@@ -626,7 +620,7 @@ function startCardDrag(e, cardId, handIdx, sourceBtn) {
   indicator.className = 'insert-indicator';
   document.body.appendChild(indicator);
 
-  dragState = { cardId, handIdx, ghost, indicator, insertIndex: null, overTrain: false, sourceBtn };
+  dragState = { cardId, handIdx, ghost, indicator, insertIndex: null, upgradeTargetId: null, upgradeHighlightEl: null, overTrain: false, sourceBtn };
   moveGhost(e.clientX, e.clientY);
   updateDropTarget(e.clientX, e.clientY);
   updateHint();
@@ -648,12 +642,35 @@ function onCardDragMove(e) {
   updateDropTarget(e.clientX, e.clientY);
 }
 
+function setUpgradeHighlight(el) {
+  if (dragState.upgradeHighlightEl === el) return;
+  if (dragState.upgradeHighlightEl) dragState.upgradeHighlightEl.classList.remove('upgrade-target');
+  dragState.upgradeHighlightEl = el;
+  if (el) el.classList.add('upgrade-target');
+}
+
 function updateDropTarget(x, y) {
   const trackRect = myTrackEl.getBoundingClientRect();
   const overTrain = x >= trackRect.left && x <= trackRect.right && y >= trackRect.top && y <= trackRect.bottom;
   dragState.overTrain = overTrain;
-  dragState.indicator.classList.toggle('visible', overTrain);
-  if (!overTrain) return;
+  dragState.upgradeTargetId = null;
+  if (!overTrain) {
+    dragState.indicator.classList.remove('visible');
+    setUpgradeHighlight(null);
+    return;
+  }
+
+  if (UPGRADABLE_TYPES.includes(dragState.cardId)) {
+    const hovered = document.elementFromPoint(x, y)?.closest('.car-box:not(.engine)');
+    if (hovered && hovered.classList.contains(dragState.cardId) && hovered.dataset.carId != null) {
+      dragState.upgradeTargetId = Number(hovered.dataset.carId);
+      dragState.indicator.classList.remove('visible');
+      setUpgradeHighlight(hovered);
+      return;
+    }
+  }
+  setUpgradeHighlight(null);
+  dragState.indicator.classList.add('visible');
 
   const carBoxes = Array.from(myTrainEl.querySelectorAll('.car-box:not(.engine)'));
   let index = carBoxes.length;
@@ -678,9 +695,10 @@ function updateDropTarget(x, y) {
 
 function onCardDragEnd(e) {
   if (!dragState) return;
-  const { cardId, handIdx, overTrain, insertIndex, ghost, indicator, sourceBtn } = dragState;
+  const { cardId, handIdx, overTrain, insertIndex, upgradeTargetId, ghost, indicator, sourceBtn } = dragState;
   ghost.remove();
   indicator.remove();
+  setUpgradeHighlight(null);
   sourceBtn.removeEventListener('pointermove', onCardDragMove);
   sourceBtn.removeEventListener('pointerup', onCardDragEnd);
   sourceBtn.removeEventListener('pointercancel', onCardDragEnd);
@@ -700,6 +718,8 @@ function onCardDragEnd(e) {
     pendingPlay = { cardId, handIdx }; // reuses the enemy-car highlight machinery
     renderTrains();
     renderHand();
+  } else if (upgradeTargetId != null) {
+    stagePlay(cardId, handIdx, upgradeTargetId, null);
   } else {
     stagePlay(cardId, handIdx, null, insertIndex);
   }
@@ -933,7 +953,7 @@ function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
   stagedPlay = { cardId, handIdx, target, insertIndex, refreshTarget };
-  myPendingCar = pendingCarFor(cardId, myRole);
+  myPendingCar = pendingCarFor(cardId, target);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
   renderTrains();
@@ -948,7 +968,7 @@ function commitPlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
   myPlay = { card: cardId, target, insertIndex, refreshTarget };
-  myPendingCar = pendingCarFor(cardId, myRole);
+  myPendingCar = pendingCarFor(cardId, target);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
   revealOppPendingIfReady();
@@ -979,7 +999,7 @@ function handleOppPlayKnown(cardId, target, insertIndex, refreshTarget) {
 // it comes in; if they already played, mine reveals the moment I commit.
 function revealOppPendingIfReady() {
   if (myPlay && oppPlay) {
-    oppPendingCar = pendingCarFor(oppPlay.card, oppRole);
+    oppPendingCar = pendingCarFor(oppPlay.card, oppPlay.target);
     oppPendingInsertIndex = oppPlay.insertIndex;
     render();
   }

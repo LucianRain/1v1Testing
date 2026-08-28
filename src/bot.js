@@ -29,6 +29,14 @@ function bestTarget(cars, ids) {
   return best;
 }
 
+// Wagon/Sniper/Armor/Repair upgrade an existing car of the same type
+// (alive or junked) if one's already coupled, instead of adding a separate
+// one - matches how a player would drag the card directly onto it.
+function existingOfType(state, side, type) {
+  const car = state[side].cars.find((c) => c.type === type);
+  return car ? car.id : null;
+}
+
 function scorePlay(state, side, cardId) {
   const opp = side === 'host' ? 'client' : 'host';
   const needsTarget = !!CARDS[cardId].target;
@@ -37,20 +45,20 @@ function scorePlay(state, side, cardId) {
 
   switch (cardId) {
     case 'wagon':
-      return { score: 5, target: null };
+      return { score: 5, target: existingOfType(state, side, 'wagon') };
     case 'sniper': {
       // Worth more specifically when they have active armor to punch through.
       const armorUp = state[opp].cars.some((c) => c.type === 'armor' && c.blockCharges > 0);
-      return { score: armorUp ? 6 : 4, target: null };
+      return { score: armorUp ? 6 : 4, target: existingOfType(state, side, 'sniper') };
     }
     case 'repair': {
       const { hp, maxHp } = computeHp(state, side);
       const missing = maxHp - hp;
-      return { score: 1 + missing * 0.6, target: null };
+      return { score: 1 + missing * 0.6, target: existingOfType(state, side, 'repair') };
     }
     case 'armor': {
       const incoming = state[opp].cars.filter((c) => c.type === 'wagon').reduce((a, c) => a + c.dmgPerRound, 0);
-      return { score: 2 + incoming * 1.5, target: null };
+      return { score: 2 + incoming * 1.5, target: existingOfType(state, side, 'armor') };
     }
     case 'claw': {
       const target = bestTarget(state[opp].cars, targets);
@@ -59,10 +67,6 @@ function scorePlay(state, side, cardId) {
     case 'sabotage': {
       const target = bestTarget(state[opp].cars, targets);
       return { score: carValue(state[opp].cars.find((c) => c.id === target)) * 0.5, target };
-    }
-    case 'overcharge': {
-      const target = bestTarget(state[side].cars, targets);
-      return { score: 3, target };
     }
     case 'reinforce': {
       const target = bestTarget(state[side].cars, targets);

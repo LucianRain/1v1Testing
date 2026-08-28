@@ -1,30 +1,33 @@
 // Pure game logic for Reroute. No DOM, no networking - deterministic so both
 // peers can run the exact same simulation from the same inputs and stay in sync.
 
-import { MERGE_ON_DUPLICATE } from './config.js';
-
 export const ENGINE_MAX_HP = 3;
 export const SUDDEN_DEATH_START_ROUND = 9;
 
+// Wagon, Sniper, Armor, and Repair can each be upgraded in place - the UI
+// lets a player drag one of these onto an existing car of the same type to
+// upgrade it, or drop it anywhere else in the train to couple a separate
+// duplicate instead. There's no dedicated Upgrade card anymore - this list
+// is what resolveSetup checks a play's target against, and what the UI
+// offers the drag-onto-self interaction for.
+export const UPGRADABLE_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
+
 export const CARDS = {
-  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, fires for 1 dmg every round (each Upgrade adds another shot)' },
+  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, fires for 1 dmg every round (drag onto your own for another shot)' },
   sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, 1 dmg every round in one shot, ignores Armor Car, targets the Wrecking Car first if one is alive' },
   claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
   armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, blocks your next hit(s); each round, shields one random friendly car until the trigger phase ends' },
   repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, heals 1 HP every round' },
-  overcharge: { name: 'Upgrade', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
   reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: "Protect one of your coupled cars for one round - can't be targeted or hit" },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
 };
 
 const CARD_IDS = Object.keys(CARDS);
-// The Wrecking Car, Sniper Car, Shield, and Upgrade are pulled from the draw
-// pool for now (not deleted from CARDS - their mechanics and rendering stay
-// intact in case they come back). Upgrade is still fully functional via the
-// merge-on-duplicate mechanic (see resolveSetup) - it just can't be drawn
-// and played as its own card anymore.
-const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'reinforce' && id !== 'overcharge');
+// The Wrecking Car, Sniper Car, and Shield are pulled from the draw pool for
+// now (not deleted from CARDS - their mechanics and rendering stay intact in
+// case they come back).
+const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'reinforce');
 
 // mulberry32 - small deterministic PRNG, good enough for shuffling a fair deck.
 export function makeRng(seed) {
@@ -211,10 +214,6 @@ export function validTargets(state, side, cardId) {
         .filter((c) => c.hp < c.maxHp || (c.type === 'armor' && c.blockCharges <= 0))
         .map((c) => c.id);
     }
-    if (cardId === 'overcharge') {
-      // Wrecking Car has nothing to scale - everything else can be upgraded.
-      return state[side].cars.filter((c) => c.type !== 'claw' && c.hp > 0).map((c) => c.id);
-    }
     return state[side].cars.map((c) => c.id);
   }
   return [];
@@ -223,8 +222,9 @@ export function validTargets(state, side, cardId) {
 const SIDES = ['host', 'client'];
 
 // Round resolution is split into two stages so the UI can animate each one
-// separately: setup (sabotage/overcharge/reinforce/refresh + new cars
-// coupling on, including a Wrecking Car firing the instant it couples)
+// separately: setup (sabotage/reinforce/refresh + new cars coupling on or
+// merging into an existing upgrade, including a Wrecking Car firing the
+// instant it couples)
 // resolves first, then the trigger phase (every car's own recurring effect).
 // Each stage mutates `state` in place and returns its own log lines; run
 // identically on both peers.
@@ -251,8 +251,9 @@ export function resolveSetup(state, plays) {
   }
   for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
 
-  // sabotage / overcharge / reinforce / refresh - claw is handled below,
-  // alongside the other cars that couple onto the train.
+  // sabotage / reinforce / refresh - claw, and Upgrade's drag-onto-self
+  // effect for the other coupling cards, are handled below, alongside the
+  // other cars that couple onto the train.
   for (const s of SIDES) {
     const play = plays[s];
     const opp = otherSide(s);
@@ -261,17 +262,6 @@ export function resolveSetup(state, plays) {
       if (car && !car.protected && car.hp > 0) {
         car.disabledThisRound = true;
         log.push(`${s} sabotages ${opp}'s ${car.type}`);
-      }
-    } else if (play.card === 'overcharge') {
-      const car = findCar(state[s].cars, play.target);
-      if (car && car.hp > 0) {
-        if (car.type === 'wagon') car.dmgPerRound += 1;
-        if (car.type === 'sniper') car.dmgPerRound += 1;
-        if (car.type === 'armor') car.blockCharges += 1;
-        if (car.type === 'repair') car.healPerRound += 1;
-        car.overcharged = true;
-        car.upgradeLevel = (car.upgradeLevel || 0) + 1;
-        log.push(`${s} upgrades their ${car.type}`);
       }
     } else if (play.card === 'reinforce') {
       const car = findCar(state[s].cars, play.target);
@@ -302,22 +292,22 @@ export function resolveSetup(state, plays) {
 
   // new cars couple on (confirms whatever the UI already previewed) - at
   // whatever position in the train the player chose, defaulting to the
-  // engine end (append) if they didn't specify one. Placing a second one of
-  // a type that's already coupled - alive OR junked - merges into that
-  // existing car instead of adding a whole separate one. If it was alive,
-  // this is exactly Upgrade's effect, stacking another level. If it was
-  // junked, this both revives it (full HP) AND resets it to a fresh level-1
-  // upgrade - it doesn't continue whatever upgrade stack it had before
-  // dying, it starts over as if newly built and immediately upgraded once.
-  // Wrecking Car is exempt: it has nothing to scale (same as Overcharge
-  // already excludes it), so a second one always couples and fires fresh.
-  const MERGEABLE_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
+  // engine end (append) if they didn't specify one. For an upgradable type
+  // (see UPGRADABLE_TYPES), the UI lets the player drag the card directly
+  // onto an existing car of that same type instead of dropping it at a
+  // position - play.target then carries that car's id, and this merges into
+  // it rather than coupling a whole separate car. If the target was alive,
+  // this stacks another upgrade level. If it was junked, this both revives
+  // it (full HP) AND resets it to a fresh level-1 upgrade - it doesn't
+  // continue whatever upgrade stack it had before dying, it starts over as
+  // if newly built and immediately upgraded once. Wrecking Car is exempt:
+  // it has nothing to scale, so it's never offered this interaction at all.
   for (const s of SIDES) {
     const play = plays[s];
     let car = null;
 
-    const existing = MERGE_ON_DUPLICATE && MERGEABLE_TYPES.includes(play.card)
-      ? state[s].cars.find((c) => c.type === play.card)
+    const existing = UPGRADABLE_TYPES.includes(play.card) && play.target != null
+      ? findCar(state[s].cars, play.target)
       : null;
 
     if (existing && existing.hp <= 0) {
