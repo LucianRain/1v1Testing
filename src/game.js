@@ -1,25 +1,26 @@
 // Pure game logic for Reroute. No DOM, no networking - deterministic so both
 // peers can run the exact same simulation from the same inputs and stay in sync.
 
-export const ENGINE_MAX_HP = 6;
+export const ENGINE_MAX_HP = 3;
 export const SUDDEN_DEATH_START_ROUND = 9;
 
 export const CARDS = {
-  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 4, desc: 'Couples on: 4 HP, fires for 1 dmg every round (each Upgrade adds another shot)' },
-  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 3, desc: 'Couples on: 3 HP, 1 dmg every round in one shot, ignores Armor Car, targets the Wrecking Car first if one is alive' },
+  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, fires for 1 dmg every round (each Upgrade adds another shot)' },
+  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, 1 dmg every round in one shot, ignores Armor Car, targets the Wrecking Car first if one is alive' },
   claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
-  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 4, desc: 'Couples on: 4 HP, blocks your next hit(s); each round, shields one random friendly car until the trigger phase ends' },
-  repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 3, desc: 'Couples on: 3 HP, heals 1 HP every round' },
+  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, blocks your next hit(s); each round, shields one random friendly car until the trigger phase ends' },
+  repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, heals 1 HP every round' },
   overcharge: { name: 'Upgrade', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
   reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: "Protect one of your coupled cars for one round - can't be targeted or hit" },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
 };
 
 const CARD_IDS = Object.keys(CARDS);
-// The Wrecking Car is pulled from the draw pool for now (not deleted from
-// CARDS - its mechanics and rendering stay intact in case it comes back).
-const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw');
+// The Wrecking Car, Sniper Car, and Shield are pulled from the draw pool for
+// now (not deleted from CARDS - their mechanics and rendering stay intact in
+// case they come back).
+const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'reinforce');
 
 // mulberry32 - small deterministic PRNG, good enough for shuffling a fair deck.
 export function makeRng(seed) {
@@ -296,11 +297,29 @@ export function resolveSetup(state, plays) {
 
   // new cars couple on (confirms whatever the UI already previewed) - at
   // whatever position in the train the player chose, defaulting to the
-  // engine end (append) if they didn't specify one.
+  // engine end (append) if they didn't specify one. Placing a second one of
+  // a type that's already coupled (and still alive) merges into the
+  // existing one instead - same effect as playing Upgrade on it - rather
+  // than adding a whole separate car. Wrecking Car is exempt: it has
+  // nothing to scale (same as Overcharge already excludes it), so a second
+  // one always couples and fires fresh.
+  const MERGEABLE_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
   for (const s of SIDES) {
     const play = plays[s];
     let car = null;
-    if (play.card === 'armor') {
+
+    const existing = MERGEABLE_TYPES.includes(play.card)
+      ? state[s].cars.find((c) => c.type === play.card && c.hp > 0)
+      : null;
+
+    if (existing) {
+      if (existing.type === 'wagon') existing.dmgPerRound += 1;
+      if (existing.type === 'sniper') existing.dmgPerRound += 1;
+      if (existing.type === 'armor') existing.blockCharges += 1;
+      if (existing.type === 'repair') existing.healPerRound += 1;
+      existing.overcharged = true;
+      log.push(`${s}'s new ${play.card} merges into their existing one, upgrading it`);
+    } else if (play.card === 'armor') {
       car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {

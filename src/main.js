@@ -41,9 +41,6 @@ const targetAreaEl = document.getElementById('target-area');
 const targetCancelBtn = document.getElementById('target-cancel');
 const waitStatusEl = document.getElementById('wait-status');
 const hintTextEl = document.getElementById('hint-text');
-const cardRevealEl = document.getElementById('card-reveal');
-const revealTitleEl = document.getElementById('reveal-title');
-const revealDescEl = document.getElementById('reveal-desc');
 const roundBannerEl = document.getElementById('round-banner');
 const gameOverEl = document.getElementById('game-over');
 const gameOverTextEl = document.getElementById('game-over-text');
@@ -53,6 +50,10 @@ const net = new PeerNetwork();
 
 const RESUME_ROOM_KEY = 'reroute-hosted-room'; // localStorage: a room I created but nobody had joined yet
 const ROOM_CODE_RE = /^[A-Z]{4}$/; // a plain 4-letter word room code
+// Keep in sync with game.js's own MERGEABLE_TYPES - playing one of these
+// when a living one of the same type is already coupled upgrades it in
+// place instead of coupling a new car (Wrecking Car is exempt).
+const MERGEABLE_HAND_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
 const AUTO_LOBBY_ID = 'reroute-auto-lobby-v1'; // fixed, well-known id: autoMode pairs up whoever reaches it first
 const AUTO_JOIN_TIMEOUT_MS = 4000; // fail fast when trying to join - a real "nobody's here" is near-instant anyway
 const AUTO_RETRY_DELAY_MS = 3000; // how long to wait before retrying when the lobby's already full
@@ -61,7 +62,6 @@ let matchMode = 'autoMode'; // 'autoMode' | 'inviteMode' - which panel is showin
 let autoMatchGeneration = 0; // bumped to invalidate an in-flight autoMode search (cancel, or switching modes)
 
 const BOT_DELAY_MS = 700; // how long the bot "thinks" before committing
-const REVEAL_MS = 1600; // how long the opponent's played card stays up
 const STAGE_MS = 550; // gap between setup and the trigger phase in the resolution animation
 const BANNER_MS = 1300; // how long the "Round N" banner stays up
 const PROJECTILE_MS = 950; // wagon projectile travel time
@@ -105,8 +105,6 @@ let blockRevealOverride = null; // { carId, displayCharges } - an Armor Car mid-
 // advanced to its real post-hit value once that specific hit has landed, so
 // a car doesn't show as damaged/junked before its own animation gets there.
 let hpRevealOverride = null;
-let revealTimeout = null;
-let revealDonePromise = Promise.resolve(); // resolves once the opponent's reveal-card popup has faded
 let bannerTimeout = null;
 let turnTimeout = null; // fires endTurn() when the 15s turn clock runs out
 let turnTickInterval = null; // updates the visible countdown every tick
@@ -118,7 +116,13 @@ let oppClawWrecked = false;
 let myAimLineEl = null; // persistent SVG line elements for the "targeting" indicator, one per side
 let oppAimLineEl = null;
 
-function pendingCarFor(cardId) {
+// Returns null (nothing new to preview) when this play would merge into an
+// already-living car of the same type instead of coupling a new one - see
+// MERGEABLE_HAND_TYPES and game.js's matching resolveSetup logic.
+function pendingCarFor(cardId, side) {
+  if (MERGEABLE_HAND_TYPES.includes(cardId) && matchState[side].cars.some((c) => c.type === cardId && c.hp > 0)) {
+    return null;
+  }
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
   if (cardId === 'sniper') return { type: 'sniper', dmgPerRound: 1, pending: true, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
   if (cardId === 'armor') return { type: 'armor', blockCharges: 1, pending: true, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
@@ -376,9 +380,9 @@ function positionTrain(trainEl, trackEl, hp, maxHp, lastWidth) {
 // this shows the flag itself the instant I choose the target (staged or
 // already committed and waiting on the opponent), well before the real
 // resolveSetup() actually runs and makes it true in matchState. This is only
-// ever driven by MY OWN play - the opponent's own plays stay gated behind
-// their reveal popup as usual, even though Sabotage's target lands on their
-// train from my perspective.
+// ever driven by MY OWN play - the opponent's own plays stay hidden until
+// both sides have committed (see revealOppPendingIfReady()), even though
+// Sabotage's target lands on their train from my perspective.
 function myStagedFlagPreviews() {
   const play = stagedPlay || (myPlay && myPlay.card ? { cardId: myPlay.card, target: myPlay.target } : null);
   if (!play) return { mine: null, opp: null };
@@ -547,9 +551,16 @@ function renderHand() {
     const disabled = locked || (needsTarget && targets.length === 0);
     btn.disabled = disabled;
     if (stagedPlay && stagedPlay.handIdx === idx) btn.classList.add('staged');
-    btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
+    const merging = MERGEABLE_HAND_TYPES.includes(cardId) && matchState[myRole].cars.some((c) => c.type === cardId && c.hp > 0);
+    const desc = merging ? `${card.desc} - you already have one, so this upgrades it instead of coupling a new one` : card.desc;
+    btn.innerHTML = `<strong>${card.name}</strong><span>${desc}</span>`;
     if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
-    if (card.persistent) {
+    if (card.persistent && merging) {
+      // Already have a living one of this type - playing it just upgrades
+      // that one in place, so there's no position to choose (see game.js's
+      // resolveSetup). A plain click is enough, same as an untargeted card.
+      btn.addEventListener('click', () => stagePlay(cardId, idx, null));
+    } else if (card.persistent) {
       // Train cars (wagon/armor/repair/claw): drag onto your train to
       // choose where in the order it couples on, instead of a plain click.
       // A Wrecking Car (claw) then needs a second drag - see onCardDragEnd.
@@ -852,6 +863,7 @@ function endTurn() {
   myHand = redrawHand(myDeck, myHand);
   myPlay = { card: null, target: null };
   targetAreaEl.classList.add('hidden');
+  revealOppPendingIfReady();
   renderTrains();
   renderHand();
   if (vsBot) {
@@ -900,7 +912,7 @@ function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
   stagedPlay = { cardId, handIdx, target, insertIndex, refreshTarget };
-  myPendingCar = pendingCarFor(cardId);
+  myPendingCar = pendingCarFor(cardId, myRole);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
   renderTrains();
@@ -915,9 +927,10 @@ function commitPlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
   myPlay = { card: cardId, target, insertIndex, refreshTarget };
-  myPendingCar = pendingCarFor(cardId);
+  myPendingCar = pendingCarFor(cardId, myRole);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
+  revealOppPendingIfReady();
   renderTrains();
   renderHand();
   if (vsBot) {
@@ -928,32 +941,27 @@ function commitPlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   }
 }
 
-// Opponent's play is known (bot decided, or a networked message arrived):
-// show their new car instantly and reveal what they played, same as our own
-// turn, before the actual resolution animation runs.
+// Opponent's play is known (bot decided, or a networked message arrived).
+// No reveal popup, and nothing about their train previews on screen until
+// my own play is also locked in - see revealOppPendingIfReady().
 function handleOppPlayKnown(cardId, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
   oppPlay = { card: cardId, target, insertIndex, refreshTarget };
-  oppPendingCar = pendingCarFor(cardId);
-  oppPendingInsertIndex = insertIndex;
-  render();
-  if (cardId) showCardReveal(cardId);
+  revealOppPendingIfReady();
   runResolution();
 }
 
-function showCardReveal(cardId) {
-  const card = CARDS[cardId];
-  revealTitleEl.textContent = card.name;
-  revealDescEl.textContent = card.desc;
-  cardRevealEl.classList.add('visible');
-  clearTimeout(revealTimeout);
-  revealDonePromise = new Promise((resolve) => {
-    revealTimeout = setTimeout(() => {
-      cardRevealEl.classList.remove('visible');
-      resolve();
-    }, REVEAL_MS);
-  });
+// Shows the opponent's pending car (if any) the instant BOTH plays are
+// known - never before. Whichever of the two plays arrives second is what
+// triggers this: if I already ended my turn, their play reveals as soon as
+// it comes in; if they already played, mine reveals the moment I commit.
+function revealOppPendingIfReady() {
+  if (myPlay && oppPlay) {
+    oppPendingCar = pendingCarFor(oppPlay.card, oppRole);
+    oppPendingInsertIndex = oppPlay.insertIndex;
+    render();
+  }
 }
 
 // Runs once both plays are known: setup, then the trigger phase (one whole
@@ -995,10 +1003,6 @@ async function runResolution() {
       oppClawWrecked = wrecked;
     }
   }
-
-  // Don't reveal or animate anything from this round until the opponent's
-  // "played X" popup has actually finished and cleared off screen.
-  await revealDonePromise;
 
   if (setup.wrecks.length) {
     await playWreckAnimations(setup.wrecks);
