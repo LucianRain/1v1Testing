@@ -98,7 +98,7 @@ let myPendingInsertIndex = null; // where in my train that preview goes
 let oppPendingCar = null; // same, for the opponent's just-revealed play
 let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
-let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Overcharge/Reinforce, or aiming a placed Wrecking Car)
+let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Refresh, or aiming a placed Wrecking Car)
 let reorderDragState = null; // { carId, ghost, indicator, insertIndex, overTrain, sourceBoxEl } - in-progress drag of an already-coupled car on my own train, reordering it
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
 let stagedPlay = null; // { cardId, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay).
@@ -410,7 +410,7 @@ function positionTrain(trainEl, trackEl, hp, maxHp, lastWidth) {
   return trainWidth;
 }
 
-// Overcharge/Reinforce/Sabotage only flip a flag on an existing car - there's
+// An upgrade/merge or Sabotage only flip a flag on an existing car - there's
 // no new car to preview the way pendingCarFor() does for coupling cards. So
 // this shows the flag itself the instant I choose the target (staged or
 // already committed and waiting on the opponent), well before the real
@@ -425,7 +425,6 @@ function myStagedFlagPreviews() {
   if (UPGRADABLE_TYPES.includes(play.cardId) && play.target != null) {
     return { mine: { target: play.target, flag: 'overcharge' }, opp: null };
   }
-  if (play.cardId === 'reinforce') return { mine: { target: play.target, flag: 'shield' }, opp: null };
   if (play.cardId === 'sabotage') return { mine: null, opp: { target: play.target, flag: 'disabled' } };
   return { mine: null, opp: null };
 }
@@ -545,10 +544,7 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo, isMine) {
     // from junk - see myStagedUpgradePreview).
     const overchargeCount = previewingThisUpgrade ? upgradePreview.upgradeLevel : car.upgradeLevel || 0;
     const showShield =
-      car.protected ||
-      car.shieldedThisRound ||
-      previewFlag === 'shield' ||
-      (shieldRevealOverride && car.id != null && shieldRevealOverride.carIds.has(car.id));
+      car.shieldedThisRound || (shieldRevealOverride && car.id != null && shieldRevealOverride.carIds.has(car.id));
     const showDisabled = car.disabledThisRound || previewFlag === 'disabled';
     if (overchargeCount > 0 || showShield || showDisabled) {
       const flagRow = document.createElement('div');
@@ -730,11 +726,11 @@ function renderHand() {
     btn.disabled = disabled;
     btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
     if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
-    if (cardId === 'sabotage' || cardId === 'reinforce' || cardId === 'refresh') {
+    if (cardId === 'sabotage' || cardId === 'refresh') {
       // Drag out an arcing targeting reticle at the target car (enemy for
-      // Sabotage, your own for Reinforce/Refresh) instead of a two-step
-      // click. Refresh on a spent Wrecking Car chains into a second drag to
-      // re-aim it - see startTargetedCardDrag.
+      // Sabotage, your own for Refresh) instead of a two-step click. Refresh
+      // on a spent Wrecking Car chains into a second drag to re-aim it - see
+      // startTargetedCardDrag.
       btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startTargetedCardDrag(e, cardId, idx, btn));
     } else {
@@ -1053,10 +1049,10 @@ function onTargetDragEnd(e) {
   onComplete(targetId);
 }
 
-// Shared by any targeted, non-coupling card (Sabotage, Overcharge, Reinforced
-// Coupling): drag an arcing reticle out from the hand card and release over a
-// highlighted car - own or enemy, whichever validTargets() says this card
-// can hit - instead of a plain click-to-target.
+// Shared by any targeted, non-coupling card (Sabotage, Refresh): drag an
+// arcing reticle out from the hand card and release over a highlighted car
+// - own or enemy, whichever validTargets() says this card can hit - instead
+// of a plain click-to-target.
 function startTargetedCardDrag(e, cardId, handIdx, sourceBtn) {
   if (sourceBtn.disabled || dragState || targetDragState) return;
   pendingPlay = { cardId, handIdx };

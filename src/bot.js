@@ -72,10 +72,6 @@ function scorePlay(state, side, cardId) {
       const target = bestTarget(state[opp].cars, targets);
       return { score: carValue(state[opp].cars.find((c) => c.id === target)) * 0.5, target };
     }
-    case 'reinforce': {
-      const target = bestTarget(state[side].cars, targets);
-      return { score: 2, target };
-    }
     case 'refresh': {
       const incoming = state[opp].cars.filter((c) => c.type === 'wagon').reduce((a, c) => a + c.dmgPerRound, 0);
       return { score: 2 + incoming * 1.2, target: targets[0] };

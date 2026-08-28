@@ -25,15 +25,16 @@ export const CARDS = {
   armor: { name: 'Shield', target: null, persistent: true, maxHp: 2, desc: '2 HP. Shields a random car each round.' },
   repair: { name: 'Repair', target: null, persistent: true, maxHp: 1, desc: '1 HP. Heals 1 HP/round.' },
   medic: { name: 'Medic', target: null, persistent: true, maxHp: 1, desc: '1 HP. Revives a junked car each round.' },
-  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protects a car for a round.' },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heals or revives a car.' },
 };
 
 const CARD_IDS = Object.keys(CARDS);
-// The Wrecking Car, Sniper Car, Shield, and Sabotage are pulled from the
-// draw pool for now (not deleted from CARDS - their mechanics and rendering
-// stay intact in case they come back).
-const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'reinforce' && id !== 'sabotage');
+// The Wrecking Car, Sniper Car, and Sabotage are pulled from the draw pool
+// for now (not deleted from CARDS - their mechanics and rendering stay
+// intact in case they come back). The Shield card (reinforce) is gone for
+// good, not just undrawable - Armor's own passive shield makes it
+// redundant, so there's no reason to keep a separate one-round version around.
+const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'sabotage');
 
 // mulberry32 - small deterministic PRNG, good enough for shuffling a fair deck.
 export function makeRng(seed) {
@@ -217,14 +218,13 @@ export function isJunk(car) {
 export function validTargets(state, side, cardId) {
   const card = CARDS[cardId];
   if (card.target === 'enemy_car') {
-    let targets = state[otherSide(side)].cars.filter((c) => !c.protected && c.hp > 0);
+    let targets = state[otherSide(side)].cars.filter((c) => c.hp > 0);
     // A Wrecking Car can't snipe a car the instant it couples on - it needs
     // to survive at least one full round first.
     if (cardId === 'claw') targets = targets.filter((c) => !c.justCoupled);
     return targets.map((c) => c.id);
   }
   if (card.target === 'own_car') {
-    if (cardId === 'reinforce') return state[side].cars.filter((c) => !c.protected && c.hp > 0).map((c) => c.id);
     if (cardId === 'refresh') {
       // Anything not at full HP (damaged or junked).
       return state[side].cars.filter((c) => c.hp < c.maxHp).map((c) => c.id);
@@ -260,29 +260,22 @@ export function resolveSetup(state, plays) {
     for (const car of state[s].cars) {
       car.disabledThisRound = false;
       car.justCoupled = false;
-      car.protected = false;
       car.shieldedThisRound = false;
     }
   }
   for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
 
-  // sabotage / reinforce / refresh - claw, and Upgrade's drag-onto-self
-  // effect for the other coupling cards, are handled below, alongside the
-  // other cars that couple onto the train.
+  // sabotage / refresh - claw, and Upgrade's drag-onto-self effect for the
+  // other coupling cards, are handled below, alongside the other cars that
+  // couple onto the train.
   for (const s of SIDES) {
     const play = plays[s];
     const opp = otherSide(s);
     if (play.card === 'sabotage') {
       const car = findCar(state[opp].cars, play.target);
-      if (car && !car.protected && car.hp > 0) {
+      if (car && car.hp > 0) {
         car.disabledThisRound = true;
         log.push(`${s} sabotages ${opp}'s ${car.type}`);
-      }
-    } else if (play.card === 'reinforce') {
-      const car = findCar(state[s].cars, play.target);
-      if (car && car.hp > 0) {
-        car.protected = true;
-        log.push(`${s} reinforces their ${car.type}`);
       }
     } else if (play.card === 'refresh') {
       const car = findCar(state[s].cars, play.target);
@@ -343,22 +336,22 @@ export function resolveSetup(state, plays) {
       existing.upgradeLevel = (existing.upgradeLevel || 0) + 1;
       log.push(`${s}'s new ${play.card} merges into their existing one, upgrading it`);
     } else if (play.card === 'armor') {
-      car = { id: ++state.carCounter, type: 'armor', shieldRolls: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
+      car = { id: ++state.carCounter, type: 'armor', shieldRolls: 1, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {
-      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
+      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
       log.push(`${s} couples an Artillery Wagon`);
     } else if (play.card === 'sniper') {
-      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
+      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
       log.push(`${s} couples a Sniper Car`);
     } else if (play.card === 'repair') {
-      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
+      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
       log.push(`${s} couples a Repair Car`);
     } else if (play.card === 'medic') {
-      car = { id: ++state.carCounter, type: 'medic', protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.medic.maxHp, maxHp: CARDS.medic.maxHp };
+      car = { id: ++state.carCounter, type: 'medic', disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.medic.maxHp, maxHp: CARDS.medic.maxHp };
       log.push(`${s} couples a Medic`);
     } else if (play.card === 'claw') {
-      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
+      car = { id: ++state.carCounter, type: 'claw', fired: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
       log.push(`${s} couples a Wrecking Car`);
     }
     if (car) insertCar(state[s].cars, car, play.insertIndex);
@@ -367,7 +360,7 @@ export function resolveSetup(state, plays) {
     if (play.card === 'claw' && car) {
       const opp = otherSide(s);
       const target = findCar(state[opp].cars, play.target);
-      if (target && !target.protected && target.hp > 0) {
+      if (target && target.hp > 0) {
         const targetIndex = state[opp].cars.indexOf(target);
         removeCar(state[opp].cars, target.id);
         log.push(`${s}'s wrecking car destroys ${opp}'s ${target.type}`);
@@ -504,11 +497,10 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     const car = picked.car;
     hitKind = 'car';
     hitCarId = car.id;
-    shielded = car.protected || car.shieldedThisRound;
+    shielded = car.shieldedThisRound;
     if (shielded) {
       targetHpAfter = car.hp;
       // Same one-hit-and-broken rule as the engine's shield, above.
-      car.protected = false;
       car.shieldedThisRound = false;
       log.push(`${targetSide}'s shielded ${car.type} takes no damage from ${sourceLabel} and the shield breaks`);
     } else {
