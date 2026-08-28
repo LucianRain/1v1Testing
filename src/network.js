@@ -11,21 +11,19 @@
 // feedback at all, instead of failing with a message the UI can show.
 const SIGNALING_TIMEOUT_MS = 10000;
 
-// STUN alone can't always find a path - two peers behind the SAME router
-// (e.g. two devices on one home WiFi) sometimes can't reach each other
-// directly OR via STUN, because it needs "NAT hairpinning" that not every
-// consumer router supports. A TURN relay is the fallback for exactly that
-// case. openrelay.metered.ca's credentials are publicly published for
-// free/test use (see their docs) - fine for a hobby project's casual/
-// same-WiFi matches, but it's a shared, rate-limited free tier: if this
-// ever needs to support many concurrent matches reliably, swap in
-// dedicated TURN credentials (Metered, Twilio, or a self-hosted coturn).
+// STUN-only: a shared public TURN relay (openrelay.metered.ca) was tried
+// here to help two devices behind the SAME router reach each other, but its
+// free-tier TURN was actively failing ICE negotiation ("your TURN server
+// appears to be broken") and made connections worse, not better - a broken
+// TURN candidate in the mix can disrupt an ICE negotiation that would have
+// succeeded fine on STUN alone. Removed rather than leave something actively
+// harmful in place. Two devices on the exact same router/WiFi may still fail
+// to connect to each other in the rare case that router doesn't support NAT
+// hairpinning - fixing that for good needs a real (paid or self-hosted) TURN
+// service, not a shared free one.
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
 ];
 const PEER_OPTIONS = { config: { iceServers: ICE_SERVERS } };
 
@@ -40,23 +38,36 @@ export class PeerNetwork extends EventTarget {
   host(existingId) {
     this.role = 'host';
     return new Promise((resolve, reject) => {
-      this.peer = new Peer(existingId || shortId(), PEER_OPTIONS);
+      const peer = new Peer(existingId || shortId(), PEER_OPTIONS);
+      this.peer = peer;
       let settled = false;
 
-      const signalingTimeout = setTimeout(() => {
+      // Giving up (timeout or error) must actually destroy this peer, not
+      // just stop listening to it - otherwise an attempt we've abandoned can
+      // still finish connecting to the broker moments later in the
+      // background and sit there holding its id (e.g. autoMode's shared
+      // lobby id) forever, since nothing else ever calls destroy() on it.
+      // Every future attempt on that id would then wrongly see it as taken.
+      const giveUp = (err) => {
         if (settled) return;
         settled = true;
-        reject(new Error("Couldn't reach the matchmaking server. Check your connection, or that no browser extension/security software is blocking it, and try again."));
+        clearTimeout(signalingTimeout);
+        peer.destroy();
+        reject(err);
+      };
+
+      const signalingTimeout = setTimeout(() => {
+        giveUp(new Error("Couldn't reach the matchmaking server. Check your connection, or that no browser extension/security software is blocking it, and try again."));
       }, SIGNALING_TIMEOUT_MS);
 
-      this.peer.on('open', (id) => {
+      peer.on('open', (id) => {
         if (settled) return;
         settled = true;
         clearTimeout(signalingTimeout);
         resolve(id);
       });
 
-      this.peer.on('connection', (conn) => {
+      peer.on('connection', (conn) => {
         if (this.conn) {
           // Already paired up on this id (relevant for autoMode's shared
           // lobby id, where a 3rd person can reach a full match) - reject
@@ -73,12 +84,8 @@ export class PeerNetwork extends EventTarget {
         });
       });
 
-      this.peer.on('error', (err) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(signalingTimeout);
-          reject(err);
-        }
+      peer.on('error', (err) => {
+        giveUp(err);
         this.dispatchEvent(new CustomEvent('error', { detail: err }));
       });
     });
@@ -87,19 +94,29 @@ export class PeerNetwork extends EventTarget {
   join(hostId, timeoutMs = 12000) {
     this.role = 'client';
     return new Promise((resolve, reject) => {
-      this.peer = new Peer(undefined, PEER_OPTIONS);
+      const peer = new Peer(undefined, PEER_OPTIONS);
+      this.peer = peer;
       let settled = false;
 
-      const signalingTimeout = setTimeout(() => {
+      // See the matching comment in host() - an abandoned attempt must be
+      // destroyed, not just ignored, or it can keep connecting in the
+      // background after we've already given up on it.
+      const giveUp = (err) => {
         if (settled) return;
         settled = true;
-        reject(new Error("Couldn't reach the matchmaking server. Check your connection, or that no browser extension/security software is blocking it, and try again."));
+        clearTimeout(signalingTimeout);
+        peer.destroy();
+        reject(err);
+      };
+
+      const signalingTimeout = setTimeout(() => {
+        giveUp(new Error("Couldn't reach the matchmaking server. Check your connection, or that no browser extension/security software is blocking it, and try again."));
       }, SIGNALING_TIMEOUT_MS);
 
-      this.peer.on('open', () => {
+      peer.on('open', () => {
         if (settled) return; // the signaling timeout already fired
         clearTimeout(signalingTimeout);
-        const conn = this.peer.connect(hostId, { reliable: true });
+        const conn = peer.connect(hostId, { reliable: true });
 
         conn.on('open', () => {
           settled = true;
@@ -108,20 +125,16 @@ export class PeerNetwork extends EventTarget {
         });
 
         conn.on('error', (err) => {
-          if (!settled) reject(err);
+          giveUp(err);
         });
 
         setTimeout(() => {
-          if (!settled) reject(new Error('Connection timed out. Check the room code.'));
+          giveUp(new Error('Connection timed out. Check the room code.'));
         }, timeoutMs);
       });
 
-      this.peer.on('error', (err) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(signalingTimeout);
-          reject(err);
-        }
+      peer.on('error', (err) => {
+        giveUp(err);
       });
     });
   }
