@@ -336,14 +336,14 @@ function inTriggerOrder(cars) {
   return cars.slice().reverse();
 }
 
-// Every car (and the engine) still standing on a side is a candidate for a
-// random hit or heal - a junked car (0 HP) is never picked, so no shot is
-// ever wasted on something already destroyed.
+// A living, coupled car is a candidate for a random hit - a junked car (0
+// HP) is never picked, so no shot is ever wasted on something already
+// destroyed. The Engine is the last thing standing: it's only a valid hit
+// target once every coupled car on that side has been killed.
 function hittablePool(state, side) {
-  const pool = [];
-  if (state[side].engine.hp > 0) pool.push({ kind: 'engine' });
-  for (const car of state[side].cars) if (car.hp > 0) pool.push({ kind: 'car', car });
-  return pool;
+  const livingCars = state[side].cars.filter((c) => c.hp > 0).map((car) => ({ kind: 'car', car }));
+  if (livingCars.length > 0) return livingCars;
+  return state[side].engine.hp > 0 ? [{ kind: 'engine' }] : [];
 }
 
 function healablePool(state, side) {
