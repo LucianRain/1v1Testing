@@ -13,35 +13,48 @@
 // feedback at all, instead of failing with a message the UI can show.
 const SIGNALING_TIMEOUT_MS = 10000;
 
-// STUN-only: a shared public TURN relay (openrelay.metered.ca) was tried
-// here to help two devices behind the SAME router reach each other, but its
-// free-tier TURN was actively failing ICE negotiation ("your TURN server
-// appears to be broken") and made connections worse, not better - a broken
-// TURN candidate in the mix can disrupt an ICE negotiation that would have
-// succeeded fine on STUN alone. Removed rather than leave something actively
-// harmful in place. Two devices on the exact same router/WiFi may still fail
-// to connect to each other in the rare case that router doesn't support NAT
-// hairpinning - fixing that for good needs a real (paid or self-hosted) TURN
-// service, not a shared free one.
-const ICE_SERVERS = [
+// STUN-only for the internet-facing (index.html) case: a shared public TURN
+// relay (openrelay.metered.ca) was tried here to help two devices behind the
+// SAME router reach each other, but its free-tier TURN was actively failing
+// ICE negotiation ("your TURN server appears to be broken") and made
+// connections worse, not better - a broken TURN candidate in the mix can
+// disrupt an ICE negotiation that would have succeeded fine on STUN alone.
+// Removed rather than leave something actively harmful in place. Two devices
+// on the exact same router/WiFi may still fail to connect to each other in
+// the rare case that router doesn't support NAT hairpinning - fixing that
+// for good on the internet-facing version needs a real (paid) TURN service.
+const PUBLIC_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
 
 // local.html is served by this project's own local server (see server.js),
-// which also hosts a private PeerJS signaling server on the same host/port
-// at /peerjs - point Peer at that instead of PeerJS's public cloud broker.
-// Two devices on the same LAN talking to a signaling server that's also on
-// that LAN sidesteps both the public broker as a dependency and the NAT
-// hairpin problem two devices behind the same router can hit going over the
-// internet - WebRTC can find a direct local path between them instead.
+// which also hosts a private PeerJS signaling server AND a private TURN
+// relay on the same machine - point Peer at both instead of PeerJS's public
+// broker and no TURN at all. Even on a LAN, plain STUN isn't always enough:
+// browsers obfuscate local candidates via mDNS, which can fail to resolve
+// between two devices on a locked-down office WiFi that blocks multicast -
+// TURN is the fallback for exactly that, and self-hosting it here means the
+// relay never has to leave the LAN either, same as signaling. Credentials
+// are just a fixed local secret (see server.js) - fine for a same-network
+// dev tool, not meant to be a real access-control boundary.
+const TURN_PORT = 3478;
+const TURN_USERNAME = 'reroute';
+const TURN_PASSWORD = 'reroute-lan';
+
 const useLocalSignaling = location.pathname.endsWith('local.html');
 
 function peerOptions() {
-  const config = { config: { iceServers: ICE_SERVERS } };
-  if (!useLocalSignaling) return config;
+  if (!useLocalSignaling) {
+    return { config: { iceServers: PUBLIC_ICE_SERVERS } };
+  }
+  const iceServers = [
+    ...PUBLIC_ICE_SERVERS,
+    { urls: `turn:${location.hostname}:${TURN_PORT}`, username: TURN_USERNAME, credential: TURN_PASSWORD },
+    { urls: `turn:${location.hostname}:${TURN_PORT}?transport=tcp`, username: TURN_USERNAME, credential: TURN_PASSWORD },
+  ];
   return {
-    ...config,
+    config: { iceServers },
     host: location.hostname,
     port: location.port ? Number(location.port) : location.protocol === 'https:' ? 443 : 80,
     path: '/peerjs',

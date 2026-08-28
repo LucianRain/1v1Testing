@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "express": "^4.19.2",
+    "node-turn": "^0.0.6",
     "peer": "^1.0.2"
   }
 }

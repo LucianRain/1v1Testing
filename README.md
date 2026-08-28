@@ -25,7 +25,7 @@ npm install
 npm start
 ```
 
-This prints two URLs: one for the hosting computer itself (`http://localhost:3000/local.html`), and one with this computer's LAN address for everyone else on the network to open in their browser. Everyone opens their URL and clicks **Join Game** - the first person becomes the host, the next person's click connects them automatically, no room code needed.
+This prints two URLs: one for the hosting computer itself (`http://localhost:1989/local.html`), and one with this computer's LAN address for everyone else on the network to open in their browser. Everyone opens their URL and clicks **Join Game** - the first person becomes the host, the next person's click connects them automatically, no room code needed.
 
 [local.html](local.html) is a trimmed-down entry point (no room codes, no "Auto Match vs Invite" toggle - just Join Game and Play vs Bot) that links back to the normal internet-facing site, which in turn links here for anyone who wants to switch to LAN play.
 
