@@ -62,6 +62,12 @@ html, body {
   font-size: 13px;
 }
 
+.cross-link.small {
+  margin-top: 8px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
 .cross-link a {
   color: #8fb8ff;
   text-decoration: none;
