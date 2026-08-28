@@ -775,6 +775,13 @@ function startCardDrag(e, cardId, handIdx, sourceBtn) {
   indicator.className = 'insert-indicator';
   document.body.appendChild(indicator);
 
+  // The ghost is now the only visible copy of the card - the hand slot it
+  // came from holds its space (so nothing else reflows) but shows nothing,
+  // rather than sitting there looking like a second copy of what's being
+  // dragged. Restored the instant the drag ends, whether it lands on the
+  // train or gets dragged away and canceled (see onCardDragEnd).
+  sourceBtn.classList.add('hand-card-lifted');
+
   dragState = { cardId, handIdx, ghost, indicator, insertIndex: null, upgradeTargetId: null, upgradeHighlightEl: null, overTrain: false, sourceBtn };
   moveGhost(e.clientX, e.clientY);
   updateDropTarget(e.clientX, e.clientY);
@@ -854,6 +861,7 @@ function onCardDragEnd(e) {
   ghost.remove();
   indicator.remove();
   setUpgradeHighlight(null);
+  sourceBtn.classList.remove('hand-card-lifted');
   sourceBtn.removeEventListener('pointermove', onCardDragMove);
   sourceBtn.removeEventListener('pointerup', onCardDragEnd);
   sourceBtn.removeEventListener('pointercancel', onCardDragEnd);
@@ -1114,6 +1122,7 @@ function abortInProgressInteractions() {
   if (dragState) {
     dragState.ghost.remove();
     dragState.indicator.remove();
+    dragState.sourceBtn.classList.remove('hand-card-lifted');
     dragState.sourceBtn.removeEventListener('pointermove', onCardDragMove);
     dragState.sourceBtn.removeEventListener('pointerup', onCardDragEnd);
     dragState.sourceBtn.removeEventListener('pointercancel', onCardDragEnd);

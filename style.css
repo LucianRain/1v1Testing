@@ -825,6 +825,13 @@ input:focus {
   pointer-events: none;
 }
 
+/* Currently being dragged - the ghost is the only visible copy, so this
+   slot holds its space but shows nothing rather than looking like a second
+   copy of the card sitting right next to the one following the pointer. */
+.hand-card-lifted {
+  visibility: hidden;
+}
+
 .card-btn {
   min-width: 140px;
   flex: 1 1 150px;
