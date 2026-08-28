@@ -384,11 +384,17 @@ function myStagedFlagPreviews() {
   return { mine: null, opp: null };
 }
 
-function hpBadge(hp) {
-  const badge = document.createElement('div');
-  badge.className = 'hp-badge';
-  badge.textContent = hp;
-  return badge;
+// One dot per point of max HP - bright red for HP still remaining, dark red
+// for HP already lost. Used on both train cars and their hand-card previews.
+function hpDots(hp, maxHp) {
+  const wrap = document.createElement('div');
+  wrap.className = 'hp-dots';
+  for (let i = 0; i < maxHp; i++) {
+    const dot = document.createElement('span');
+    dot.className = `hp-dot ${i < hp ? 'filled' : 'empty'}`;
+    wrap.appendChild(dot);
+  }
+  return wrap;
 }
 
 function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
@@ -410,13 +416,13 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
     if (car.id != null) box.dataset.carId = car.id;
     let stat;
     if (junk) stat = 'junk';
-    else if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
+    else if (car.type === 'wagon') stat = car.dmgPerRound > 1 ? `${car.dmgPerRound} shots/rd` : '1 shot/rd';
     else if (car.type === 'sniper') stat = `${car.dmgPerRound}/rd · pierces`;
     else if (car.type === 'armor') stat = spent ? 'spent' : `${displayBlockCharges}x block`;
     else if (car.type === 'claw') stat = awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
-    box.appendChild(hpBadge(hp));
+    box.appendChild(hpDots(hp, car.maxHp));
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
     const flagKinds = [];
     if (car.overcharged || previewFlag === 'overcharge') flagKinds.push('overcharge');
@@ -456,7 +462,7 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
   const engineJunk = engineInfo.hp <= 0;
   engine.className = `car-box engine${engineInfo.pulse ? ' pulse' : ''}${engineJunk ? ' junk' : ''}`;
   engine.innerHTML = `<strong>ENGINE</strong>`;
-  engine.appendChild(hpBadge(engineInfo.hp));
+  engine.appendChild(hpDots(engineInfo.hp, engineInfo.maxHp));
   el.appendChild(engine);
 }
 
@@ -510,6 +516,7 @@ function renderHand() {
     btn.disabled = disabled;
     if (stagedPlay && stagedPlay.handIdx === idx) btn.classList.add('staged');
     btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
+    if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
     if (card.persistent) {
       // Train cars (wagon/armor/repair/claw): drag onto your train to
       // choose where in the order it couples on, instead of a plain click.
@@ -548,6 +555,7 @@ function startCardDrag(e, cardId, handIdx, sourceBtn) {
   const ghost = document.createElement('div');
   ghost.className = 'card-ghost';
   ghost.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
+  if (card.maxHp) ghost.appendChild(hpDots(card.maxHp, card.maxHp));
   document.body.appendChild(ghost);
 
   const indicator = document.createElement('div');

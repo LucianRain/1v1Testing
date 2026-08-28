@@ -5,13 +5,13 @@ export const ENGINE_MAX_HP = 6;
 export const SUDDEN_DEATH_START_ROUND = 9;
 
 export const CARDS = {
-  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 4, desc: 'Couples on: 4 HP, 1 dmg every round' },
-  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 3, desc: 'Couples on: 3 HP, 1 dmg every round, ignores Armor Car' },
-  claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, then destroys one of their coupled cars' },
+  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 4, desc: 'Couples on: 4 HP, fires for 1 dmg every round (each Upgrade adds another shot)' },
+  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 3, desc: 'Couples on: 3 HP, 1 dmg every round in one shot, ignores Armor Car, targets the Wrecking Car first if one is alive' },
+  claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
   armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 4, desc: 'Couples on: 4 HP, blocks your next hit(s)' },
   repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 3, desc: 'Couples on: 3 HP, heals 1 HP every round' },
-  overcharge: { name: 'Overcharge', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
+  overcharge: { name: 'Upgrade', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
   reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars' },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
 };
@@ -204,8 +204,8 @@ export function validTargets(state, side, cardId) {
         .map((c) => c.id);
     }
     if (cardId === 'overcharge') {
-      // Sniper Car doesn't scale - that's the trade-off for ignoring armor.
-      return state[side].cars.filter((c) => c.type !== 'claw' && c.type !== 'sniper' && c.hp > 0).map((c) => c.id);
+      // Wrecking Car has nothing to scale - everything else can be upgraded.
+      return state[side].cars.filter((c) => c.type !== 'claw' && c.hp > 0).map((c) => c.id);
     }
     return state[side].cars.map((c) => c.id);
   }
@@ -243,10 +243,11 @@ export function resolveSetup(state, plays) {
       const car = findCar(state[s].cars, play.target);
       if (car && car.hp > 0) {
         if (car.type === 'wagon') car.dmgPerRound += 1;
+        if (car.type === 'sniper') car.dmgPerRound += 1;
         if (car.type === 'armor') car.blockCharges += 1;
         if (car.type === 'repair') car.healPerRound += 1;
         car.overcharged = true;
-        log.push(`${s} overcharges their ${car.type}`);
+        log.push(`${s} upgrades their ${car.type}`);
       }
     } else if (play.card === 'reinforce') {
       const car = findCar(state[s].cars, play.target);
@@ -346,6 +347,15 @@ function hittablePool(state, side) {
   return state[side].engine.hp > 0 ? [{ kind: 'engine' }] : [];
 }
 
+// Sniper Cars hunt the Wrecking Car first - if one is still alive on the
+// target side, that's the only candidate; otherwise falls back to the usual
+// living-cars-then-engine pool.
+function hittablePoolPreferClaw(state, side) {
+  const livingClaws = state[side].cars.filter((c) => c.type === 'claw' && c.hp > 0).map((car) => ({ kind: 'car', car }));
+  if (livingClaws.length > 0) return livingClaws;
+  return hittablePool(state, side);
+}
+
 function healablePool(state, side) {
   const pool = [];
   const engine = state[side].engine;
@@ -365,7 +375,7 @@ function pickRandom(pool, rng) {
 // what's still standing. Records a structured event so the UI can replay the
 // sequence hit by hit - e.g. firing a projectile at the actual car it hit,
 // and only revealing the damage once it "lands".
-function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId, ignoresArmor = false) {
+function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId, ignoresArmor = false, poolBuilder = hittablePool) {
   if (amount <= 0) return;
 
   const armorCar = ignoresArmor
@@ -387,7 +397,7 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     // Spent, not destroyed - it stays coupled, just inert until an
     // Overcharge (or Refresh) gives it something to block with again.
   } else {
-    const picked = pickRandom(hittablePool(state, targetSide), state.battleRng);
+    const picked = pickRandom(poolBuilder(state, targetSide), state.battleRng);
     if (picked && picked.kind === 'engine') {
       state[targetSide].engine.hp = Math.max(0, state[targetSide].engine.hp - amount);
       hitKind = 'engine';
@@ -462,9 +472,16 @@ export function resolveTrigger(state, plays) {
           }
         }
       } else if (car.type === 'wagon') {
-        applyHit(state, target, car.dmgPerRound, log, `${side}'s artillery wagon`, events, 'wagon', side, car.id);
+        // Each point of dmgPerRound (base 1, +1 per Upgrade) is its own
+        // separately-aimed 1-dmg shot, not one lump hit - an upgraded wagon
+        // can spread damage across several enemy cars in a single round.
+        for (let i = 0; i < car.dmgPerRound; i++) {
+          applyHit(state, target, 1, log, `${side}'s artillery wagon`, events, 'wagon', side, car.id);
+        }
       } else if (car.type === 'sniper') {
-        applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, true);
+        // Unlike the wagon, a sniper always fires its whole dmgPerRound as
+        // one shot - and it always goes for the Wrecking Car first.
+        applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, true, hittablePoolPreferClaw);
       }
     }
   }

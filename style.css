@@ -455,23 +455,36 @@ input:focus {
   filter: grayscale(1) brightness(0.45);
 }
 
-.hp-badge {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  background: #c0342a;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+.hp-dots {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   justify-content: center;
-  z-index: 2;
+  gap: 3px;
+  max-width: 60px;
+}
+
+.hp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+}
+
+.hp-dot.filled {
+  background: #ff3b30;
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 3px rgba(255, 59, 48, 0.6);
+}
+
+.hp-dot.empty {
+  background: #43120f;
+}
+
+.card-btn .hp-dots,
+.card-ghost .hp-dots {
+  justify-content: flex-start;
+  max-width: none;
 }
 
 @media (prefers-reduced-motion: no-preference) {
