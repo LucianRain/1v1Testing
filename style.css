@@ -791,7 +791,9 @@ input:focus {
 }
 
 .hand-car-box {
-  flex: 1 1 150px;
+  /* No flex-grow - stays exactly as wide as it'll be once coupled on the
+     train (.car-box's own width: max-content), not stretched to fill the row. */
+  flex: 0 0 auto;
   z-index: 1;
 }
 

@@ -662,8 +662,21 @@ function renderHand() {
 
   slots.forEach((cardId, idx) => {
     if (cardId == null) {
+      // Matches whichever card actually vacated this slot, content and all -
+      // a hand-car-box sizes itself by its own content (width: max-content),
+      // so an empty placeholder would collapse to the wrong width and shift
+      // the remaining real card's position (since #hand centers its row).
+      const vacatedId = stagedPlay.cardId;
+      const vacatedCard = CARDS[vacatedId];
       const placeholder = document.createElement('div');
-      placeholder.className = 'card-btn placeholder';
+      if (vacatedCard.persistent) {
+        const base = pendingCarFor(vacatedId, null);
+        placeholder.className = `car-box ${vacatedId} hand-car-box placeholder`;
+        placeholder.innerHTML = `<strong>${vacatedCard.name}</strong><span>${carStatText(base)}</span>`;
+        placeholder.appendChild(hpDots(base.maxHp, base.maxHp));
+      } else {
+        placeholder.className = 'card-btn placeholder';
+      }
       handEl.appendChild(placeholder);
       return;
     }
