@@ -251,7 +251,8 @@ input:focus {
 .half {
   flex: 1 1 0;
   min-height: 0;
-  overflow-y: auto;
+  overflow-x: auto;
+  overflow-y: visible;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -313,6 +314,10 @@ input:focus {
   width: 100%;
   height: 78px;
   flex-shrink: 0;
+  /* Cars sit flush against the center strip (end turn / round number), and
+     tall upgrade-flag stacks can poke up past the track's own height - keep
+     the train drawing in front of that strip rather than tucked behind it. */
+  z-index: 2;
 }
 
 .track::after {

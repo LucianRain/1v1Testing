@@ -456,7 +456,7 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
         for (let i = 0; i < overchargeCount; i++) {
           const flag = document.createElement('div');
           flag.className = 'car-flag overcharge';
-          flag.textContent = 'Overcharged';
+          flag.textContent = 'Upgraded';
           stack.appendChild(flag);
         }
         flagRow.appendChild(stack);
