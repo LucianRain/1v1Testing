@@ -330,9 +330,8 @@ export function resolveSetup(state, plays) {
   return { log, wrecks };
 }
 
-// A tie-break only: when a car from each side would otherwise fire at the
-// exact same position-rank (see fullTriggerOrder), priority alternates every
-// round so neither side has a standing advantage.
+// Which player's whole train triggers first alternates every round, so
+// neither side has a standing advantage.
 function sidePriority(state) {
   return state.round % 2 === 1 ? ['host', 'client'] : ['client', 'host'];
 }
@@ -344,22 +343,16 @@ function inTriggerOrder(cars) {
   return cars.slice().reverse();
 }
 
-// The trigger phase's firing order is determined ONLY by each car's position
-// in its own train (engine end first) - never by which side it's on. A
-// rank-0 car (right next to its engine) on either side fires before any
-// rank-1 car on either side, and so on. Two cars tied on rank (one from each
-// side) are broken by sidePriority. This is what stops a heal from jumping
-// ahead of an attack just because of whose "turn" it technically is.
+// The trigger phase's firing order: whichever side has priority this round
+// (see sidePriority) fires its ENTIRE train, in position order (engine end
+// first), before the other side's train starts at all. Within one side,
+// order is purely by position - e.g. engine -> artillery -> heal fires
+// artillery, then heal, regardless of which is "newer".
 function fullTriggerOrder(state) {
-  const priority = sidePriority(state);
   const ranked = [];
-  for (const side of SIDES) {
-    inTriggerOrder(state[side].cars).forEach((car, rank) => ranked.push({ side, car, rank }));
+  for (const side of sidePriority(state)) {
+    for (const car of inTriggerOrder(state[side].cars)) ranked.push({ side, car });
   }
-  ranked.sort((a, b) => {
-    if (a.rank !== b.rank) return a.rank - b.rank;
-    return priority.indexOf(a.side) - priority.indexOf(b.side);
-  });
   return ranked;
 }
 
