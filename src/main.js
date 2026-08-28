@@ -117,10 +117,10 @@ let myAimLineEl = null; // persistent SVG line elements for the "targeting" indi
 let oppAimLineEl = null;
 
 // Returns null (nothing new to preview) when this play would merge into an
-// already-living car of the same type instead of coupling a new one - see
-// MERGEABLE_HAND_TYPES and game.js's matching resolveSetup logic.
+// existing car of the same type (alive or junked) instead of coupling a new
+// one - see MERGEABLE_HAND_TYPES and game.js's matching resolveSetup logic.
 function pendingCarFor(cardId, side) {
-  if (MERGEABLE_HAND_TYPES.includes(cardId) && matchState[side].cars.some((c) => c.type === cardId && c.hp > 0)) {
+  if (MERGEABLE_HAND_TYPES.includes(cardId) && matchState[side].cars.some((c) => c.type === cardId)) {
     return null;
   }
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
@@ -449,27 +449,41 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
     box.appendChild(hpDots(hp, car.maxHp));
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
-    const flagKinds = [];
-    if (car.overcharged || previewFlag === 'overcharge') flagKinds.push('overcharge');
-    if (car.protected || car.shieldedThisRound || previewFlag === 'shield') flagKinds.push('shield');
-    if (car.disabledThisRound || previewFlag === 'disabled') flagKinds.push('disabled');
-    if (flagKinds.length) {
+    // One upgrade = one flag - a car upgraded multiple times (via Upgrade,
+    // merging in a duplicate, or both) shows one stacked flag per level. A
+    // staged-but-not-yet-resolved Upgrade/merge previews as current+1.
+    const currentLevel = car.upgradeLevel || 0;
+    const overchargeCount = previewFlag === 'overcharge' ? currentLevel + 1 : currentLevel;
+    const showShield = car.protected || car.shieldedThisRound || previewFlag === 'shield';
+    const showDisabled = car.disabledThisRound || previewFlag === 'disabled';
+    if (overchargeCount > 0 || showShield || showDisabled) {
       const flagRow = document.createElement('div');
       flagRow.className = 'car-flags';
-      flagKinds.forEach((kind) => {
-        const flag = document.createElement('div');
-        flag.className = `car-flag ${kind}`;
-        if (kind === 'overcharge') {
+      if (overchargeCount > 0) {
+        const stack = document.createElement('div');
+        stack.className = 'overcharge-stack';
+        for (let i = 0; i < overchargeCount; i++) {
+          const flag = document.createElement('div');
+          flag.className = 'car-flag overcharge';
           flag.textContent = 'Overcharged';
-        } else if (kind === 'disabled') {
-          flag.textContent = 'Disabled';
-        } else {
-          const icon = document.createElement('div');
-          icon.className = 'shield-icon';
-          flag.appendChild(icon);
+          stack.appendChild(flag);
         }
+        flagRow.appendChild(stack);
+      }
+      if (showShield) {
+        const flag = document.createElement('div');
+        flag.className = 'car-flag shield';
+        const icon = document.createElement('div');
+        icon.className = 'shield-icon';
+        flag.appendChild(icon);
         flagRow.appendChild(flag);
-      });
+      }
+      if (showDisabled) {
+        const flag = document.createElement('div');
+        flag.className = 'car-flag disabled';
+        flag.textContent = 'Disabled';
+        flagRow.appendChild(flag);
+      }
       box.appendChild(flagRow);
     }
     if (validIds && car.id != null && validIds.has(car.id)) {
@@ -551,14 +565,20 @@ function renderHand() {
     const disabled = locked || (needsTarget && targets.length === 0);
     btn.disabled = disabled;
     if (stagedPlay && stagedPlay.handIdx === idx) btn.classList.add('staged');
-    const merging = MERGEABLE_HAND_TYPES.includes(cardId) && matchState[myRole].cars.some((c) => c.type === cardId && c.hp > 0);
-    const desc = merging ? `${card.desc} - you already have one, so this upgrades it instead of coupling a new one` : card.desc;
+    const existingOfType = MERGEABLE_HAND_TYPES.includes(cardId) ? matchState[myRole].cars.find((c) => c.type === cardId) : null;
+    const merging = !!existingOfType;
+    const desc = !existingOfType
+      ? card.desc
+      : existingOfType.hp <= 0
+        ? `${card.desc} - revives your junked one as a level-1 upgrade instead of coupling a new one`
+        : `${card.desc} - you already have one, so this upgrades it instead of coupling a new one`;
     btn.innerHTML = `<strong>${card.name}</strong><span>${desc}</span>`;
     if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
     if (card.persistent && merging) {
-      // Already have a living one of this type - playing it just upgrades
-      // that one in place, so there's no position to choose (see game.js's
-      // resolveSetup). A plain click is enough, same as an untargeted card.
+      // Already have one of this type, alive or junked - playing it just
+      // merges into that one in place, so there's no position to choose
+      // (see game.js's resolveSetup). A plain click is enough, same as an
+      // untargeted card.
       btn.addEventListener('click', () => stagePlay(cardId, idx, null));
     } else if (card.persistent) {
       // Train cars (wagon/armor/repair/claw): drag onto your train to

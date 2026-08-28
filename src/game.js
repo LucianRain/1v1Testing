@@ -266,6 +266,7 @@ export function resolveSetup(state, plays) {
         if (car.type === 'armor') car.blockCharges += 1;
         if (car.type === 'repair') car.healPerRound += 1;
         car.overcharged = true;
+        car.upgradeLevel = (car.upgradeLevel || 0) + 1;
         log.push(`${s} upgrades their ${car.type}`);
       }
     } else if (play.card === 'reinforce') {
@@ -298,41 +299,54 @@ export function resolveSetup(state, plays) {
   // new cars couple on (confirms whatever the UI already previewed) - at
   // whatever position in the train the player chose, defaulting to the
   // engine end (append) if they didn't specify one. Placing a second one of
-  // a type that's already coupled (and still alive) merges into the
-  // existing one instead - same effect as playing Upgrade on it - rather
-  // than adding a whole separate car. Wrecking Car is exempt: it has
-  // nothing to scale (same as Overcharge already excludes it), so a second
-  // one always couples and fires fresh.
+  // a type that's already coupled - alive OR junked - merges into that
+  // existing car instead of adding a whole separate one. If it was alive,
+  // this is exactly Upgrade's effect, stacking another level. If it was
+  // junked, this both revives it (full HP) AND resets it to a fresh level-1
+  // upgrade - it doesn't continue whatever upgrade stack it had before
+  // dying, it starts over as if newly built and immediately upgraded once.
+  // Wrecking Car is exempt: it has nothing to scale (same as Overcharge
+  // already excludes it), so a second one always couples and fires fresh.
   const MERGEABLE_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
   for (const s of SIDES) {
     const play = plays[s];
     let car = null;
 
     const existing = MERGEABLE_TYPES.includes(play.card)
-      ? state[s].cars.find((c) => c.type === play.card && c.hp > 0)
+      ? state[s].cars.find((c) => c.type === play.card)
       : null;
 
-    if (existing) {
+    if (existing && existing.hp <= 0) {
+      existing.hp = existing.maxHp;
+      existing.upgradeLevel = 1;
+      if (existing.type === 'wagon') existing.dmgPerRound = 2;
+      if (existing.type === 'sniper') existing.dmgPerRound = 2;
+      if (existing.type === 'armor') existing.blockCharges = 2;
+      if (existing.type === 'repair') existing.healPerRound = 2;
+      existing.overcharged = true;
+      log.push(`${s}'s new ${play.card} revives their junked one as a level-1 upgrade`);
+    } else if (existing) {
       if (existing.type === 'wagon') existing.dmgPerRound += 1;
       if (existing.type === 'sniper') existing.dmgPerRound += 1;
       if (existing.type === 'armor') existing.blockCharges += 1;
       if (existing.type === 'repair') existing.healPerRound += 1;
       existing.overcharged = true;
+      existing.upgradeLevel = (existing.upgradeLevel || 0) + 1;
       log.push(`${s}'s new ${play.card} merges into their existing one, upgrading it`);
     } else if (play.card === 'armor') {
-      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
+      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {
-      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
+      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
       log.push(`${s} couples an Artillery Wagon`);
     } else if (play.card === 'sniper') {
-      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
+      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
       log.push(`${s} couples a Sniper Car`);
     } else if (play.card === 'repair') {
-      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
+      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
       log.push(`${s} couples a Repair Car`);
     } else if (play.card === 'claw') {
-      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
+      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
       log.push(`${s} couples a Wrecking Car`);
     }
     if (car) insertCar(state[s].cars, car, play.insertIndex);
