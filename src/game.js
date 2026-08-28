@@ -286,9 +286,11 @@ export function resolveSetup(state, plays) {
   // (see UPGRADABLE_TYPES), the UI lets the player drag the card directly
   // onto an existing car of that same type instead of dropping it at a
   // position - play.target then carries that car's id, and this merges into
-  // it rather than coupling a whole separate car. If the target was alive,
-  // this stacks another upgrade level. If it was junked, this both revives
-  // it (full HP) AND resets it to a fresh level-1 upgrade - it doesn't
+  // it rather than coupling a whole separate car. Every upgrade level adds
+  // +1 max HP (and heals that same point immediately), on top of its own
+  // type's stat bump. If the target was alive, this stacks another upgrade
+  // level. If it was junked, this both revives it (full HP, at the new
+  // bumped max) AND resets it to a fresh level-1 upgrade - it doesn't
   // continue whatever upgrade stack it had before dying, it starts over as
   // if newly built and immediately upgraded once. Wrecking Car is exempt:
   // it has nothing to scale, so it's never offered this interaction at all.
@@ -301,6 +303,7 @@ export function resolveSetup(state, plays) {
       : null;
 
     if (existing && existing.hp <= 0) {
+      existing.maxHp += 1;
       existing.hp = existing.maxHp;
       existing.upgradeLevel = 1;
       if (existing.type === 'wagon') existing.dmgPerRound = 2;
@@ -310,6 +313,8 @@ export function resolveSetup(state, plays) {
       existing.overcharged = true;
       log.push(`${s}'s new ${play.card} revives their junked one as a level-1 upgrade`);
     } else if (existing) {
+      existing.maxHp += 1;
+      existing.hp += 1;
       if (existing.type === 'wagon') existing.dmgPerRound += 1;
       if (existing.type === 'sniper') existing.dmgPerRound += 1;
       if (existing.type === 'armor') existing.shieldRolls += 1;

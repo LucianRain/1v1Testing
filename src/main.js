@@ -441,7 +441,10 @@ function myStagedUpgradePreview() {
   const car = matchState[myRole].cars.find((c) => c.id === play.target);
   if (!car) return null;
   const reviving = car.hp <= 0;
-  const preview = { carId: car.id, hp: reviving ? car.maxHp : car.hp, upgradeLevel: reviving ? 1 : (car.upgradeLevel || 0) + 1 };
+  // Every upgrade level adds +1 max HP (healing that same point immediately),
+  // on top of its own type's stat bump - see resolveSetup's matching logic.
+  const maxHp = car.maxHp + 1;
+  const preview = { carId: car.id, hp: reviving ? maxHp : car.hp + 1, maxHp, upgradeLevel: reviving ? 1 : (car.upgradeLevel || 0) + 1 };
   if (car.type === 'wagon' || car.type === 'sniper') preview.dmgPerRound = reviving ? 2 : car.dmgPerRound + 1;
   if (car.type === 'armor') preview.shieldRolls = reviving ? 2 : car.shieldRolls + 1;
   if (car.type === 'repair') preview.healPerRound = reviving ? 2 : car.healPerRound + 1;
@@ -483,6 +486,7 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
     const dmgPerRound = previewingThisUpgrade && upgradePreview.dmgPerRound != null ? upgradePreview.dmgPerRound : car.dmgPerRound;
     const shieldRolls = previewingThisUpgrade && upgradePreview.shieldRolls != null ? upgradePreview.shieldRolls : car.shieldRolls;
     const healPerRound = previewingThisUpgrade && upgradePreview.healPerRound != null ? upgradePreview.healPerRound : car.healPerRound;
+    const maxHp = previewingThisUpgrade ? upgradePreview.maxHp : car.maxHp;
     let stat;
     if (junk) stat = 'junk';
     else if (car.type === 'wagon') stat = dmgPerRound > 1 ? `${dmgPerRound} shots/rd` : '1 shot/rd';
@@ -491,7 +495,7 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
     else if (car.type === 'claw') stat = awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
-    box.appendChild(hpDots(hp, car.maxHp));
+    box.appendChild(hpDots(hp, maxHp));
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
     // One upgrade = one flag - a car upgraded multiple times (via Upgrade,
     // merging in a duplicate, or both) shows one stacked flag per level. A
