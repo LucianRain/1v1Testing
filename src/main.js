@@ -98,7 +98,7 @@ let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
 let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Overcharge/Reinforce, or aiming a placed Wrecking Car)
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
-let stagedPlay = null; // { cardId, handIdx, target, insertIndex, refreshTarget } - what End Turn submits; null = pass
+let stagedPlay = null; // { cardId, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay).
 let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
@@ -582,7 +582,7 @@ function updateHint() {
   } else if (myPlay) {
     text = '';
   } else if (stagedPlay) {
-    text = 'Staged - press End Turn to lock it in, or choose a different card.';
+    text = 'Played - press End Turn to submit.';
   } else {
     text = 'Play a card from your hand, or press End Turn to pass.';
   }
@@ -604,15 +604,18 @@ function renderHand() {
   else waitStatusEl.textContent = vsBot ? 'Bot is thinking...' : 'Waiting for opponent...';
   updateHint();
 
+  // Once a card is staged, it's already gone from myHand (see stagePlay) -
+  // the rest of the hand locks too, so there's no changing your mind about
+  // which card to play. End Turn itself stays enabled so it can submit it.
+  const handLocked = locked || !!stagedPlay;
   myHand.forEach((cardId, idx) => {
     const card = CARDS[cardId];
     const btn = document.createElement('button');
     btn.className = 'card-btn';
     const needsTarget = !!card.target;
     const targets = needsTarget ? validTargets(matchState, myRole, cardId) : [];
-    const disabled = locked || (needsTarget && targets.length === 0);
+    const disabled = handLocked || (needsTarget && targets.length === 0);
     btn.disabled = disabled;
-    if (stagedPlay && stagedPlay.handIdx === idx) btn.classList.add('staged');
     const desc = UPGRADABLE_TYPES.includes(cardId) ? `${card.desc} Drag onto itself to upgrade.` : card.desc;
     btn.innerHTML = `<strong>${card.name}</strong><span>${desc}</span>`;
     if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
@@ -943,7 +946,7 @@ function endTurn() {
   stagedPlay = null;
 
   if (staged) {
-    commitPlay(staged.cardId, staged.handIdx, staged.target, staged.insertIndex, staged.refreshTarget);
+    commitPlay(staged.cardId, staged.target, staged.insertIndex, staged.refreshTarget);
     return;
   }
 
@@ -991,14 +994,16 @@ function playBotTurn() {
   handleOppPlayKnown(botChoice.card, botChoice.target, null, botChoice.refreshTarget);
 }
 
-// Records a choice locally without ending the turn: no network send, no
-// lock-in. The player can keep browsing their hand and stage something else
-// instead - only End Turn (button or the 15s clock) actually submits
-// whatever's currently staged.
+// Records a choice locally without ending the turn: no network send yet -
+// only End Turn (button or the 15s clock) actually submits it. But the
+// choice itself is locked in immediately: the card leaves the hand right
+// here, and the rest of the hand disables (see renderHand's handLocked), so
+// there's no going back to play something else instead.
 function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
-  stagedPlay = { cardId, handIdx, target, insertIndex, refreshTarget };
+  myHand.splice(handIdx, 1);
+  stagedPlay = { cardId, target, insertIndex, refreshTarget };
   myPendingCar = pendingCarFor(cardId, target);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
@@ -1008,9 +1013,8 @@ function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
 
 // Actually submits a play over the network and starts resolution. Only ever
 // called once per round, from endTurn() - never directly from a hand
-// interaction anymore.
-function commitPlay(cardId, handIdx, target, insertIndex, refreshTarget) {
-  myHand.splice(handIdx, 1);
+// interaction anymore. The card already left myHand back in stagePlay.
+function commitPlay(cardId, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
   myPlay = { card: cardId, target, insertIndex, refreshTarget };

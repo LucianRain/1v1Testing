@@ -778,10 +778,6 @@ input:focus {
   cursor: grab;
 }
 
-.card-btn.staged {
-  box-shadow: 0 0 0 2px #ffd15c, 0 0 12px 2px rgba(255, 209, 92, 0.5);
-}
-
 .card-ghost {
   position: fixed;
   top: 0;
