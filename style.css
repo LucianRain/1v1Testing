@@ -376,23 +376,33 @@ input:focus {
   z-index: 1;
 }
 
+/* The box-shadow copy can't inherit the pseudo-element's own border, so its
+   ring is faked with a second, larger, border-colored shadow layer sitting
+   behind a smaller dark one - otherwise that second wheel renders as a flat
+   dark disc instead of matching the bordered look of the other three. */
 .car-box::before {
   left: 12%;
-  box-shadow: 17px 0 0 0 #17171b;
+  box-shadow:
+    17px 0 0 -2px #17171b,
+    17px 0 0 0 rgba(255, 255, 255, 0.35);
 }
 
 .car-box::after {
   right: 12%;
-  box-shadow: -17px 0 0 0 #17171b;
+  box-shadow:
+    -17px 0 0 -2px #17171b,
+    -17px 0 0 0 rgba(255, 255, 255, 0.35);
 }
 
 .car-flags {
   position: absolute;
-  top: -14px;
+  bottom: 100%;
+  margin-bottom: 4px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  align-items: flex-end;
+  flex-direction: column-reverse;
+  align-items: center;
   gap: 3px;
   pointer-events: none;
 }
