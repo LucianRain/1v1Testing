@@ -835,9 +835,10 @@ button:active {
 }
 
 #btn-pass {
-  margin-top: 2px;
+  margin: 6px 0;
   opacity: 0.8;
   background: rgba(255, 255, 255, 0.1);
+  transition: background 150ms ease, opacity 150ms ease;
 }
 
 #btn-pass:disabled {
@@ -847,5 +848,13 @@ button:active {
 
 #btn-pass.low-time {
   background: linear-gradient(90deg, #e0553f, #ff8a4a);
+  opacity: 1;
+}
+
+/* Wins over .low-time (source order, same specificity) - once a card is
+   staged the outcome is already decided, so "played" matters more than
+   "hurry up". */
+#btn-pass.played {
+  background: linear-gradient(90deg, #3fae5c, #58cc73);
   opacity: 1;
 }

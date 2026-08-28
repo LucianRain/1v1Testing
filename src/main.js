@@ -462,6 +462,8 @@ function renderHand() {
     btnPass.textContent = 'End Turn';
     btnPass.classList.remove('low-time');
   }
+  const hasPlayedCard = !!stagedPlay || (!!myPlay && myPlay.card !== null);
+  btnPass.classList.toggle('played', hasPlayedCard);
   waitStatusEl.classList.toggle('hidden', !myPlay || gameOver);
   if (oppPlay) waitStatusEl.textContent = 'Resolving...';
   else waitStatusEl.textContent = vsBot ? 'Bot is thinking...' : 'Waiting for opponent...';
