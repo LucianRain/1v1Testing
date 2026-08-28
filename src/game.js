@@ -529,21 +529,6 @@ export function resolveTrigger(state, plays) {
   const log = [];
   const events = [];
 
-  // Armor Car passively shields one random friendly car (or the engine)
-  // each round, for the rest of this trigger phase only - it doesn't carry
-  // into the next round's card-targeting window like the Shield card does.
-  for (const s of SIDES) {
-    for (const car of state[s].cars) {
-      if (car.type === 'armor' && car.hp > 0 && !car.disabledThisRound) {
-        const picked = pickRandom(shieldablePool(state, s), state.battleRng);
-        if (picked) {
-          if (picked.kind === 'engine') state[s].engine.shieldedThisRound = true;
-          else picked.car.shieldedThisRound = true;
-        }
-      }
-    }
-  }
-
   for (const { side, car } of fullTriggerOrder(state)) {
     const target = otherSide(side);
     if (car.disabledThisRound || car.hp <= 0) continue;
@@ -584,6 +569,16 @@ export function resolveTrigger(state, plays) {
       // Unlike the wagon, a sniper always fires its whole dmgPerRound as
       // one shot - and it always goes for the Wrecking Car first.
       applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, true, hittablePoolPreferClaw);
+    } else if (car.type === 'armor') {
+      // Armor's passive shield is granted right when its own turn in the
+      // trigger order comes up, not upfront before the round starts - a car
+      // that fires earlier in the order (closer to the engine) is exposed to
+      // hits before this armor car has had a chance to shield anyone.
+      const picked = pickRandom(shieldablePool(state, side), state.battleRng);
+      if (picked) {
+        if (picked.kind === 'engine') state[side].engine.shieldedThisRound = true;
+        else picked.car.shieldedThisRound = true;
+      }
     }
   }
 
