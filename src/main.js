@@ -485,9 +485,11 @@ function renderHand() {
       // A Wrecking Car (claw) then needs a second drag - see onCardDragEnd.
       btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startCardDrag(e, cardId, idx, btn));
-    } else if (cardId === 'sabotage' || cardId === 'overcharge' || cardId === 'reinforce') {
+    } else if (cardId === 'sabotage' || cardId === 'overcharge' || cardId === 'reinforce' || cardId === 'refresh') {
       // Drag out an arcing targeting reticle at the target car (enemy for
-      // Sabotage, your own for Overcharge/Reinforce) instead of a two-step click.
+      // Sabotage, your own for Overcharge/Reinforce/Refresh) instead of a
+      // two-step click. Refresh on a spent Wrecking Car chains into a second
+      // drag to re-aim it - see startTargetedCardDrag.
       btn.classList.add('draggable');
       btn.addEventListener('pointerdown', (e) => startTargetedCardDrag(e, cardId, idx, btn));
     } else {
@@ -676,13 +678,27 @@ function startTargetedCardDrag(e, cardId, handIdx, sourceBtn) {
   pendingPlay = { cardId, handIdx };
   renderTrains(); // safe: doesn't touch the hand DOM the pointer is captured on
   startArcTargeting(e, sourceBtn, (targetId) => {
-    pendingPlay = null;
-    if (targetId != null) {
-      stagePlay(cardId, handIdx, targetId);
-    } else {
+    if (targetId == null) {
+      pendingPlay = null;
       renderTrains();
       renderHand();
+      return;
     }
+
+    if (cardId === 'refresh') {
+      const car = matchState[myRole].cars.find((c) => c.id === targetId);
+      if (car && car.type === 'claw') {
+        // Reviving a Wrecking Car needs a fresh aim before it can fire again -
+        // don't stage yet, switch into the same arc-reticle flow used to aim
+        // a freshly-placed one.
+        pendingPlay = null;
+        startRefreshAim(handIdx, targetId);
+        return;
+      }
+    }
+
+    pendingPlay = null;
+    stagePlay(cardId, handIdx, targetId);
   });
 }
 
