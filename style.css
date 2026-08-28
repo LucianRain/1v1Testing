@@ -582,6 +582,14 @@ input:focus {
   .shield-icon.shield-break {
     animation: shield-break 0.38s ease forwards;
   }
+
+  .hand-card-enter {
+    animation: hand-card-slide-in 0.35s ease;
+  }
+
+  .hand-card-exit {
+    animation: hand-card-slide-out 0.25s ease forwards;
+  }
 }
 
 @keyframes wiggle {
@@ -606,6 +614,15 @@ input:focus {
   0% { transform: scale(1) rotate(0deg); opacity: 1; }
   30% { transform: scale(1.35) rotate(-10deg); opacity: 1; }
   100% { transform: scale(0.3) rotate(30deg); opacity: 0; }
+}
+
+@keyframes hand-card-slide-in {
+  from { transform: translateX(60px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes hand-card-slide-out {
+  to { transform: translateX(-60px); opacity: 0; }
 }
 
 .projectile {
@@ -800,6 +817,12 @@ input:focus {
 .hand-car-box:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* Mid-exit (End Turn was just pressed) - not interactive regardless of
+   whether the slide animation itself is actually playing. */
+.hand-card-exit {
+  pointer-events: none;
 }
 
 .card-btn {

@@ -70,6 +70,7 @@ const SHIELD_PULSE_MS = 260; // a shield icon pulses once it absorbs a hit...
 const SHIELD_BREAK_MS = 380; // ...then shatters, right before the shield actually lifts
 const TURN_TIME_MS = 15000; // how long you have to act before your turn auto-passes
 const HAND_SIZE = 2; // matches game.js's redrawHand default - always exactly this many slots
+const HAND_EXIT_MS = 250; // whatever's left in hand slides out before End Turn actually proceeds
 
 let myRole = null; // 'host' | 'client'
 let oppRole = null;
@@ -101,6 +102,7 @@ let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Overchar
 let reorderDragState = null; // { carId, ghost, indicator, insertIndex, overTrain, sourceBoxEl } - in-progress drag of an already-coupled car on my own train, reordering it
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
 let stagedPlay = null; // { cardId, handIdx, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay); handIdx is only kept around so renderHand can hold that slot's layout in place.
+let lastRenderedHandSlots = []; // cardId shown in each hand slot on the previous renderHand() call (or null) - whichever slot changed gets the slide-in-from-the-right entrance animation
 let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
@@ -685,6 +687,8 @@ function renderHand() {
     const targets = needsTarget ? validTargets(matchState, myRole, cardId) : [];
     const disabled = handLocked || (needsTarget && targets.length === 0);
 
+    const isNew = lastRenderedHandSlots[idx] !== cardId;
+
     if (card.persistent) {
       // Train cars (Gunner/Sniper/Shield/Repair/Wrecker) render in hand as
       // the exact same little car - wheels, color, name, stat line, HP dots
@@ -692,7 +696,7 @@ function renderHand() {
       // nothing to imagine about what you're about to drag onto the train.
       const base = pendingCarFor(cardId, null);
       const btn = document.createElement('button');
-      btn.className = `car-box ${cardId} hand-car-box draggable`;
+      btn.className = `car-box ${cardId} hand-car-box draggable${isNew ? ' hand-card-enter' : ''}`;
       btn.disabled = disabled;
       const upgradeHint = UPGRADABLE_TYPES.includes(cardId) ? ' Drag onto itself to upgrade.' : '';
       btn.title = `${card.desc}${upgradeHint}`;
@@ -708,7 +712,7 @@ function renderHand() {
     }
 
     const btn = document.createElement('button');
-    btn.className = 'card-btn';
+    btn.className = `card-btn${isNew ? ' hand-card-enter' : ''}`;
     btn.disabled = disabled;
     btn.innerHTML = `<strong>${card.name}</strong><span>${card.desc}</span>`;
     if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
@@ -730,6 +734,8 @@ function renderHand() {
     }
     handEl.appendChild(btn);
   });
+
+  lastRenderedHandSlots = slots;
 }
 
 // Dragging a train-car hand card: a ghost follows the pointer, and an
@@ -1128,12 +1134,34 @@ function abortInProgressInteractions() {
   awaitingAim = null;
 }
 
+// Whatever's currently shown in the hand row (the played card, if any,
+// already left back in stagePlay - this is whatever real cards are left)
+// slides out to the left right as the turn ends, before anything about the
+// next round - a redrawn hand on a pass, or the resolution animation -
+// actually starts.
+function playHandExitAnimation() {
+  const cards = Array.from(handEl.children).filter((el) => !el.classList.contains('placeholder'));
+  if (!cards.length) return Promise.resolve();
+  cards.forEach((el) => el.classList.add('hand-card-exit'));
+  return wait(HAND_EXIT_MS);
+}
+
 // Shared by the End Turn button and the 15s clock running out. Whatever is
 // currently staged is what actually gets submitted; if nothing was staged,
-// this round counts as a pass.
-function endTurn() {
+// this round counts as a pass. Async now (waits for the hand's exit
+// animation first) - endingTurn guards against a second call (a fast
+// double-click, or the clock firing at the same moment) landing during that
+// window, before btnPass has actually disabled.
+let endingTurn = false;
+async function endTurn() {
+  if (endingTurn) return;
+  endingTurn = true;
   clearTurnTimer();
   abortInProgressInteractions();
+  btnPass.disabled = true;
+
+  await playHandExitAnimation();
+  endingTurn = false;
 
   const staged = stagedPlay;
   stagedPlay = null;
