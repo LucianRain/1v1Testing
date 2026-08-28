@@ -92,7 +92,6 @@ let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
 let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Overcharge/Reinforce, or aiming a placed Wrecking Car)
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
-let refreshAimState = null; // { handIdx, carId } while reviving a spent Wrecking Car needs a fresh aim
 let stagedPlay = null; // { cardId, handIdx, target, insertIndex, refreshTarget } - what End Turn submits; null = pass
 let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
 let myLastTrainWidth = null;
@@ -182,7 +181,6 @@ function startMatch(seed) {
   oppPendingCar = null;
   oppPendingInsertIndex = null;
   awaitingAim = null;
-  refreshAimState = null;
   stagedPlay = null;
   phantomWrecks = [];
   myLastTrainWidth = null;
@@ -373,14 +371,13 @@ function renderTrain(el, cars, validIds, flagPreview) {
         : car.blockCharges;
     const spent = (car.type === 'armor' && displayBlockCharges <= 0) || (car.type === 'claw' && car.fired);
     const awaitingPlacementAim = car.pending && car.needsAim;
-    const awaitingRefreshAim = refreshAimState && car.id === refreshAimState.carId;
     box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}${spent ? ' spent' : ''}`;
     if (car.id != null) box.dataset.carId = car.id;
     let stat;
     if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
     else if (car.type === 'sniper') stat = `${car.dmgPerRound}/rd · pierces`;
     else if (car.type === 'armor') stat = spent ? 'spent' : `${displayBlockCharges}x block`;
-    else if (car.type === 'claw') stat = awaitingPlacementAim || awaitingRefreshAim ? 'aim me' : spent ? 'spent' : 'armed';
+    else if (car.type === 'claw') stat = awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
@@ -414,9 +411,6 @@ function renderTrain(el, cars, validIds, flagPreview) {
     if (awaitingPlacementAim) {
       box.classList.add('needs-aim');
       box.addEventListener('pointerdown', (e) => startClawAim(e, box));
-    } else if (awaitingRefreshAim) {
-      box.classList.add('needs-aim');
-      box.addEventListener('pointerdown', (e) => startRefreshAimDrag(e, box));
     }
     el.appendChild(box);
   });
@@ -440,8 +434,6 @@ function updateHint() {
     text = 'Drag to a target, then release to aim.';
   } else if (awaitingAim) {
     text = 'Drag from your Wrecking Car to aim it at an enemy car.';
-  } else if (refreshAimState) {
-    text = 'Drag from your Wrecking Car to re-aim it.';
   } else if (pendingPlay) {
     text = '';
   } else if (myPlay) {
@@ -685,18 +677,6 @@ function startTargetedCardDrag(e, cardId, handIdx, sourceBtn) {
       return;
     }
 
-    if (cardId === 'refresh') {
-      const car = matchState[myRole].cars.find((c) => c.id === targetId);
-      if (car && car.type === 'claw') {
-        // Reviving a Wrecking Car needs a fresh aim before it can fire again -
-        // don't stage yet, switch into the same arc-reticle flow used to aim
-        // a freshly-placed one.
-        pendingPlay = null;
-        startRefreshAim(handIdx, targetId);
-        return;
-      }
-    }
-
     pendingPlay = null;
     stagePlay(cardId, handIdx, targetId);
   });
@@ -719,34 +699,6 @@ function startClawAim(e, boxEl) {
   });
 }
 
-// Refresh was played targeting a spent Wrecking Car (see chooseTarget): it
-// needs a brand new aim, same drag-out reticle as placing one fresh, before
-// it can actually fire again. Switches the field's highlighting over to
-// enemy cars (reusing Claw's own targeting rules) and marks the revived car
-// as the thing to drag from.
-function startRefreshAim(handIdx, carId) {
-  targetAreaEl.classList.add('hidden');
-  refreshAimState = { handIdx, carId };
-  pendingPlay = { cardId: 'claw', handIdx }; // borrow claw's enemy_car targeting for the highlight
-  renderTrains();
-  renderHand();
-}
-
-function startRefreshAimDrag(e, boxEl) {
-  if (!refreshAimState || dragState || targetDragState) return;
-  const { handIdx, carId } = refreshAimState;
-  startArcTargeting(e, boxEl, (targetId) => {
-    if (targetId != null) {
-      refreshAimState = null;
-      pendingPlay = null;
-      stagePlay('refresh', handIdx, carId, null, targetId);
-    } else {
-      renderTrains();
-      renderHand();
-    }
-  });
-}
-
 function beginTargeting(cardId, handIdx) {
   pendingPlay = { cardId, handIdx };
   targetAreaEl.classList.remove('hidden');
@@ -757,18 +709,6 @@ function beginTargeting(cardId, handIdx) {
 function chooseTarget(targetId) {
   if (!pendingPlay) return;
   const { cardId, handIdx } = pendingPlay;
-
-  if (cardId === 'refresh') {
-    const car = matchState[myRole].cars.find((c) => c.id === targetId);
-    if (car && car.type === 'claw') {
-      // Reviving a Wrecking Car needs a fresh aim before it can fire again -
-      // don't commit yet, switch into the same arc-reticle flow used to aim
-      // a freshly-placed one.
-      startRefreshAim(handIdx, targetId);
-      return;
-    }
-  }
-
   pendingPlay = null;
   stagePlay(cardId, handIdx, targetId);
 }
@@ -806,14 +746,13 @@ function abortInProgressInteractions() {
     targetDragState = null;
   }
   pendingPlay = null;
-  if (awaitingAim || refreshAimState) {
-    // Placed (or revived) but never aimed - it never became a real staged
-    // play, so its preview goes too.
+  if (awaitingAim) {
+    // Placed but never aimed - it never became a real staged play, so its
+    // preview goes too.
     myPendingCar = null;
     myPendingInsertIndex = null;
   }
   awaitingAim = null;
-  refreshAimState = null;
 }
 
 // Shared by the End Turn button and the 15s clock running out. Whatever is

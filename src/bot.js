@@ -67,12 +67,7 @@ function scorePlay(state, side, cardId) {
     }
     case 'refresh': {
       const incoming = state[opp].cars.filter((c) => c.type === 'wagon').reduce((a, c) => a + c.dmgPerRound, 0);
-      const target = targets[0];
-      const car = state[side].cars.find((c) => c.id === target);
-      // Reviving a Wrecking Car also needs a fresh enemy target to fire at.
-      const refreshTarget =
-        car && car.type === 'claw' ? bestTarget(state[opp].cars, validTargets(state, side, 'claw')) : null;
-      return { score: 2 + incoming * 1.2, target, refreshTarget };
+      return { score: 2 + incoming * 1.2, target: targets[0] };
     }
     default:
       return { score: -Infinity, target: null };

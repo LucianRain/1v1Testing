@@ -13,7 +13,7 @@ export const CARDS = {
   repair: { name: 'Repair Car', target: null, persistent: true, desc: 'Couples on: heals 1 HP every round' },
   overcharge: { name: 'Overcharge', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
   reinforce: { name: 'Reinforced Coupling', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars' },
-  refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Reactivate one of your spent cars' },
+  refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Recharge one of your spent Armor Cars' },
 };
 
 const CARD_IDS = Object.keys(CARDS);
@@ -156,11 +156,16 @@ export function isSpent(car) {
 export function validTargets(state, side, cardId) {
   const card = CARDS[cardId];
   if (card.target === 'enemy_car') {
-    return state[otherSide(side)].cars.filter((c) => !c.protected).map((c) => c.id);
+    const targets = state[otherSide(side)].cars.filter((c) => !c.protected);
+    // A Wrecking Car can't snipe a car the instant it couples on - it needs
+    // to survive at least one full round first.
+    return (cardId === 'claw' ? targets.filter((c) => !c.justCoupled) : targets).map((c) => c.id);
   }
   if (card.target === 'own_car') {
     if (cardId === 'reinforce') return state[side].cars.filter((c) => !c.protected).map((c) => c.id);
-    if (cardId === 'refresh') return state[side].cars.filter(isSpent).map((c) => c.id);
+    // Refresh only recharges Armor Cars now - reviving a Wrecking Car for a
+    // repeat kill was a degenerate combo (see balance notes below).
+    if (cardId === 'refresh') return state[side].cars.filter((c) => c.type === 'armor' && isSpent(c)).map((c) => c.id);
     if (cardId === 'overcharge') {
       // Sniper Car doesn't scale - that's the trade-off for ignoring armor.
       return state[side].cars.filter((c) => c.type !== 'claw' && c.type !== 'sniper').map((c) => c.id);
@@ -182,7 +187,7 @@ export function resolveSetup(state, plays) {
   const log = [];
   const wrecks = []; // { attackerSide, attackerCarId, targetSide, targetCarId, targetCarSnapshot, targetIndex }
 
-  for (const s of SIDES) for (const car of state[s].cars) car.disabledThisRound = false;
+  for (const s of SIDES) for (const car of state[s].cars) { car.disabledThisRound = false; car.justCoupled = false; }
   for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
 
   // sabotage / overcharge / reinforce / refresh - claw is handled below,
@@ -213,31 +218,9 @@ export function resolveSetup(state, plays) {
       }
     } else if (play.card === 'refresh') {
       const car = findCar(state[s].cars, play.target);
-      if (car && isSpent(car)) {
-        if (car.type === 'armor') {
-          car.blockCharges = 1;
-          log.push(`${s} refreshes their armor car`);
-        } else if (car.type === 'claw') {
-          // Reviving a Wrecking Car re-aims and fires it immediately, same
-          // as when it was first placed - it goes right back to spent.
-          const enemyCar = findCar(state[opp].cars, play.refreshTarget);
-          if (enemyCar && !enemyCar.protected) {
-            const targetIndex = state[opp].cars.indexOf(enemyCar);
-            removeCar(state[opp].cars, enemyCar.id);
-            log.push(`${s} refreshes their wrecking car, which destroys ${opp}'s ${enemyCar.type}`);
-            wrecks.push({
-              attackerSide: s,
-              attackerCarId: car.id,
-              targetSide: opp,
-              targetCarId: enemyCar.id,
-              targetCarSnapshot: { ...enemyCar },
-              targetIndex,
-            });
-          } else {
-            log.push(`${s} refreshes their wrecking car`);
-          }
-          car.fired = true;
-        }
+      if (car && car.type === 'armor' && isSpent(car)) {
+        car.blockCharges = 1;
+        log.push(`${s} refreshes their armor car`);
       }
     }
   }
@@ -249,19 +232,19 @@ export function resolveSetup(state, plays) {
     const play = plays[s];
     let car = null;
     if (play.card === 'armor') {
-      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false };
+      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {
-      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false };
+      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true };
       log.push(`${s} couples an Artillery Wagon`);
     } else if (play.card === 'sniper') {
-      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false };
+      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true };
       log.push(`${s} couples a Sniper Car`);
     } else if (play.card === 'repair') {
-      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false };
+      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true };
       log.push(`${s} couples a Repair Car`);
     } else if (play.card === 'claw') {
-      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false };
+      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true };
       log.push(`${s} couples a Wrecking Car`);
     }
     if (car) insertCar(state[s].cars, car, play.insertIndex);
