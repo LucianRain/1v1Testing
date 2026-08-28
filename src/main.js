@@ -1,6 +1,7 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
 import { CARDS, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
+import { MERGE_ON_DUPLICATE } from './config.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
 const gameScreen = document.getElementById('game-screen');
@@ -120,7 +121,7 @@ let oppAimLineEl = null;
 // existing car of the same type (alive or junked) instead of coupling a new
 // one - see MERGEABLE_HAND_TYPES and game.js's matching resolveSetup logic.
 function pendingCarFor(cardId, side) {
-  if (MERGEABLE_HAND_TYPES.includes(cardId) && matchState[side].cars.some((c) => c.type === cardId)) {
+  if (MERGE_ON_DUPLICATE && MERGEABLE_HAND_TYPES.includes(cardId) && matchState[side].cars.some((c) => c.type === cardId)) {
     return null;
   }
   if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
@@ -565,7 +566,7 @@ function renderHand() {
     const disabled = locked || (needsTarget && targets.length === 0);
     btn.disabled = disabled;
     if (stagedPlay && stagedPlay.handIdx === idx) btn.classList.add('staged');
-    const existingOfType = MERGEABLE_HAND_TYPES.includes(cardId) ? matchState[myRole].cars.find((c) => c.type === cardId) : null;
+    const existingOfType = MERGE_ON_DUPLICATE && MERGEABLE_HAND_TYPES.includes(cardId) ? matchState[myRole].cars.find((c) => c.type === cardId) : null;
     const merging = !!existingOfType;
     const desc = !existingOfType
       ? card.desc

@@ -1,6 +1,8 @@
 // Pure game logic for Reroute. No DOM, no networking - deterministic so both
 // peers can run the exact same simulation from the same inputs and stay in sync.
 
+import { MERGE_ON_DUPLICATE } from './config.js';
+
 export const ENGINE_MAX_HP = 3;
 export const SUDDEN_DEATH_START_ROUND = 9;
 
@@ -314,7 +316,7 @@ export function resolveSetup(state, plays) {
     const play = plays[s];
     let car = null;
 
-    const existing = MERGEABLE_TYPES.includes(play.card)
+    const existing = MERGE_ON_DUPLICATE && MERGEABLE_TYPES.includes(play.card)
       ? state[s].cars.find((c) => c.type === play.card)
       : null;
 
