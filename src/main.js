@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, MAX_HP, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, resolveSetup, resolveTrigger, validTargets, checkWinner } from './game.js';
+import { CARDS, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -98,7 +98,13 @@ let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
 let inTriggerPhase = false;
 let pulsingIds = new Set(); // car ids to pulse on the next render, then cleared
+let pulsingEngineSides = new Set(); // side keys ('host'/'client') whose engine box should pulse on the next render, then cleared
 let blockRevealOverride = null; // { carId, displayCharges } - an Armor Car mid-block keeps showing its pre-hit charge count until the projectile lands
+// { carHp: Map<carId, hp>, engineHp: { host, client } } during a trigger-phase
+// reveal - each car/engine's own HP snapshot from before this stage, only
+// advanced to its real post-hit value once that specific hit has landed, so
+// a car doesn't show as damaged/junked before its own animation gets there.
+let hpRevealOverride = null;
 let revealTimeout = null;
 let revealDonePromise = Promise.resolve(); // resolves once the opponent's reveal-card popup has faded
 let bannerTimeout = null;
@@ -113,11 +119,11 @@ let myAimLineEl = null; // persistent SVG line elements for the "targeting" indi
 let oppAimLineEl = null;
 
 function pendingCarFor(cardId) {
-  if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true };
-  if (cardId === 'sniper') return { type: 'sniper', dmgPerRound: 1, pending: true };
-  if (cardId === 'armor') return { type: 'armor', blockCharges: 1, pending: true };
-  if (cardId === 'repair') return { type: 'repair', healPerRound: 1, pending: true };
-  if (cardId === 'claw') return { type: 'claw', pending: true };
+  if (cardId === 'wagon') return { type: 'wagon', dmgPerRound: 1, pending: true, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
+  if (cardId === 'sniper') return { type: 'sniper', dmgPerRound: 1, pending: true, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
+  if (cardId === 'armor') return { type: 'armor', blockCharges: 1, pending: true, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
+  if (cardId === 'repair') return { type: 'repair', healPerRound: 1, pending: true, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
+  if (cardId === 'claw') return { type: 'claw', pending: true, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
   return null;
 }
 
@@ -165,7 +171,9 @@ net.addEventListener('close', () => {
 
 function startMatch(seed) {
   clearTurnTimer();
-  matchState = createMatchState();
+  // Both peers derive the same battle-RNG seed from the same shared match
+  // seed, so their random hit/heal targeting stays in lockstep.
+  matchState = createMatchState(deriveSeed(seed, 'battle'));
   myDeck = createDeck(deriveSeed(seed, myRole));
   myHand = ensureWeapon(myDeck, [draw(myDeck), draw(myDeck), draw(myDeck)]);
   myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
@@ -187,6 +195,8 @@ function startMatch(seed) {
   oppLastTrainWidth = null;
   inTriggerPhase = false;
   pulsingIds = new Set();
+  pulsingEngineSides = new Set();
+  hpRevealOverride = null;
   myResolvedClawId = null;
   oppResolvedClawId = null;
   myClawWrecked = false;
@@ -201,23 +211,35 @@ function startMatch(seed) {
 
 function render() {
   roundInfoEl.textContent = inTriggerPhase ? 'Trigger Phase' : `Round ${matchState.round}`;
-  renderHp(myHpEl, myHpFillEl, matchState[myRole].hp);
-  renderHp(oppHpEl, oppHpFillEl, matchState[oppRole].hp);
+  const myTotal = computeHp(matchState, myRole);
+  const oppTotal = computeHp(matchState, oppRole);
+  renderHp(myHpEl, myHpFillEl, myTotal.hp, myTotal.maxHp);
+  renderHp(oppHpEl, oppHpFillEl, oppTotal.hp, oppTotal.maxHp);
   renderTrains();
   renderHand();
 }
 
-function renderHp(labelEl, fillEl, hp) {
-  labelEl.textContent = hp;
-  const pct = Math.max(0, Math.min(1, hp / MAX_HP)) * 100;
+function renderHp(labelEl, fillEl, hp, maxHp) {
+  labelEl.textContent = `${hp}/${maxHp}`;
+  const pct = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) * 100 : 0;
   fillEl.style.width = `${pct}%`;
-  fillEl.classList.toggle('low', hp <= MAX_HP * 0.3);
+  fillEl.classList.toggle('low', maxHp > 0 && hp <= maxHp * 0.3);
 }
 
-// hpOverride, when given ({ my, opp }), positions the trains using those HP
-// values instead of matchState's live ones - used mid-damage-animation, where
-// matchState already holds the fully-resolved future state but the train on
-// the rails shouldn't move until the hit that caused it has actually landed.
+// A car/engine's own HP, honoring the trigger-phase reveal gating (see
+// hpRevealOverride) - falls back to the live matchState value otherwise.
+function displayCarHp(car) {
+  return hpRevealOverride ? hpRevealOverride.carHp.get(car.id) ?? car.hp : car.hp;
+}
+function displayEngineHp(side) {
+  return hpRevealOverride ? hpRevealOverride.engineHp[side] : matchState[side].engine.hp;
+}
+
+// hpOverride, when given ({ my, opp }), positions the trains using those
+// total-HP values instead of matchState's live ones - used mid-damage-
+// animation, where matchState already holds the fully-resolved future state
+// but the train on the rails shouldn't move until the hit that caused it has
+// actually landed.
 function renderTrains(hpOverride) {
   let myValidIds = null;
   let oppValidIds = null;
@@ -242,13 +264,17 @@ function renderTrains(hpOverride) {
   }
 
   const flagPreviews = myStagedFlagPreviews();
-  renderTrain(myTrainEl, myCars, myValidIds, flagPreviews.mine);
-  renderTrain(oppTrainEl, oppCars, oppValidIds, flagPreviews.opp);
+  const myEngine = { hp: displayEngineHp(myRole), maxHp: matchState[myRole].engine.maxHp, pulse: pulsingEngineSides.has(myRole) };
+  const oppEngine = { hp: displayEngineHp(oppRole), maxHp: matchState[oppRole].engine.maxHp, pulse: pulsingEngineSides.has(oppRole) };
+  renderTrain(myTrainEl, myCars, myValidIds, flagPreviews.mine, myEngine);
+  renderTrain(oppTrainEl, oppCars, oppValidIds, flagPreviews.opp, oppEngine);
 
-  const myHp = hpOverride ? hpOverride.my : matchState[myRole].hp;
-  const oppHp = hpOverride ? hpOverride.opp : matchState[oppRole].hp;
-  myLastTrainWidth = positionTrain(myTrainEl, myTrackEl, myHp, myLastTrainWidth);
-  oppLastTrainWidth = positionTrain(oppTrainEl, oppTrackEl, oppHp, oppLastTrainWidth);
+  const myTotal = hpOverride ? hpOverride.my : computeHp(matchState, myRole).hp;
+  const oppTotal = hpOverride ? hpOverride.opp : computeHp(matchState, oppRole).hp;
+  const myMax = computeHp(matchState, myRole).maxHp;
+  const oppMax = computeHp(matchState, oppRole).maxHp;
+  myLastTrainWidth = positionTrain(myTrainEl, myTrackEl, myTotal, myMax, myLastTrainWidth);
+  oppLastTrainWidth = positionTrain(oppTrainEl, oppTrackEl, oppTotal, oppMax, oppLastTrainWidth);
 
   updateAimLines();
 }
@@ -322,8 +348,8 @@ function updateOneAimLine(which, side, targetSide) {
 // through the animated `left` transition (which otherwise briefly overshoots
 // past the track edge before settling). Only animate when HP itself is what
 // changed the position.
-function positionTrain(trainEl, trackEl, hp, lastWidth) {
-  const frac = Math.max(0, Math.min(1, hp / MAX_HP));
+function positionTrain(trainEl, trackEl, hp, maxHp, lastWidth) {
+  const frac = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
   const trainWidth = trainEl.offsetWidth;
   const room = trackEl.offsetWidth - trainWidth;
   const left = Math.max(0, room) * frac;
@@ -358,7 +384,14 @@ function myStagedFlagPreviews() {
   return { mine: null, opp: null };
 }
 
-function renderTrain(el, cars, validIds, flagPreview) {
+function hpBadge(hp) {
+  const badge = document.createElement('div');
+  badge.className = 'hp-badge';
+  badge.textContent = hp;
+  return badge;
+}
+
+function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
   el.innerHTML = '';
 
   // Cars trail behind the engine, which leads on the right - the train faces right.
@@ -369,17 +402,21 @@ function renderTrain(el, cars, validIds, flagPreview) {
       car.type === 'armor' && blockRevealOverride && car.id === blockRevealOverride.carId
         ? blockRevealOverride.displayCharges
         : car.blockCharges;
+    const hp = displayCarHp(car);
+    const junk = hp <= 0;
     const spent = (car.type === 'armor' && displayBlockCharges <= 0) || (car.type === 'claw' && car.fired);
     const awaitingPlacementAim = car.pending && car.needsAim;
-    box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}${spent ? ' spent' : ''}`;
+    box.className = `car-box ${car.type}${car.pending ? ' pending' : ''}${pulse ? ' pulse' : ''}${junk ? ' junk' : spent ? ' spent' : ''}`;
     if (car.id != null) box.dataset.carId = car.id;
     let stat;
-    if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
+    if (junk) stat = 'junk';
+    else if (car.type === 'wagon') stat = `${car.dmgPerRound}/rd`;
     else if (car.type === 'sniper') stat = `${car.dmgPerRound}/rd · pierces`;
     else if (car.type === 'armor') stat = spent ? 'spent' : `${displayBlockCharges}x block`;
     else if (car.type === 'claw') stat = awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
     else stat = `+${car.healPerRound}/rd`;
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
+    box.appendChild(hpBadge(hp));
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
     const flagKinds = [];
     if (car.overcharged || previewFlag === 'overcharge') flagKinds.push('overcharge');
@@ -416,8 +453,10 @@ function renderTrain(el, cars, validIds, flagPreview) {
   });
 
   const engine = document.createElement('div');
-  engine.className = 'car-box engine';
-  engine.textContent = 'ENGINE';
+  const engineJunk = engineInfo.hp <= 0;
+  engine.className = `car-box engine${engineInfo.pulse ? ' pulse' : ''}${engineJunk ? ' junk' : ''}`;
+  engine.innerHTML = `<strong>ENGINE</strong>`;
+  engine.appendChild(hpBadge(engineInfo.hp));
   el.appendChild(engine);
 }
 
@@ -929,9 +968,19 @@ async function runResolution() {
   await wait(STAGE_MS);
 
   inTriggerPhase = true;
-  const preTriggerHp = { host: matchState.host.hp, client: matchState.client.hp };
+  const preTriggerHp = { host: computeHp(matchState, 'host').hp, client: computeHp(matchState, 'client').hp };
+  // Snapshot every car/engine's own HP before the trigger phase mutates it -
+  // renderTrains reads through this until each specific hit/heal "lands", so
+  // a car doesn't look damaged/junked ahead of its own animation.
+  const carHpSnapshot = new Map();
+  for (const side of [myRole, oppRole]) for (const car of matchState[side].cars) carHpSnapshot.set(car.id, car.hp);
+  hpRevealOverride = {
+    carHp: carHpSnapshot,
+    engineHp: { host: matchState.host.engine.hp, client: matchState.client.engine.hp },
+  };
   const trigger = resolveTrigger(matchState, plays); // fully resolved now; revealed to the player hit by hit below
   await playTriggerEvents(trigger.events, preTriggerHp);
+  hpRevealOverride = null;
   inTriggerPhase = false;
   render();
   finishRound(plays);
@@ -1086,7 +1135,14 @@ async function playTriggerEvents(events, displayedHp) {
       pulsingIds = new Set();
       const variant = event.kind === 'sniper' ? 'projectile-sniper' : null;
       const duration = event.kind === 'sniper' ? SNIPER_PROJECTILE_MS : PROJECTILE_MS;
-      await fireProjectile(carBoxEl(event.attackerSide, event.attackerCarId), engineBoxEl(event.targetSide), variant, duration);
+      // A blocked shot flies at the armor car that intercepts it; otherwise
+      // it flies at whichever car (or the engine) the hit actually landed on.
+      const toEl = event.blocked
+        ? carBoxEl(event.targetSide, event.blockedByCarId)
+        : event.hitKind === 'car'
+          ? carBoxEl(event.targetSide, event.hitCarId)
+          : engineBoxEl(event.targetSide);
+      await fireProjectile(carBoxEl(event.attackerSide, event.attackerCarId), toEl, variant, duration);
     } else {
       await wait(EVENT_PAUSE_MS);
     }
@@ -1094,13 +1150,19 @@ async function playTriggerEvents(events, displayedHp) {
     // Landed - now it's safe to reveal the result.
     blockRevealOverride = null;
     displayedHp[event.targetSide] = event.hpAfter;
+    if (hpRevealOverride) {
+      if (event.hitKind === 'engine') hpRevealOverride.engineHp[event.targetSide] = event.targetHpAfter;
+      else if (event.hitKind === 'car') hpRevealOverride.carHp.set(event.hitCarId, event.targetHpAfter);
+    }
     if (event.blocked) pulsingIds = new Set([event.blockedByCarId]);
-    else if (event.kind === 'heal') pulsingIds = new Set([event.attackerCarId]);
+    else if (event.hitKind === 'car') pulsingIds = new Set([event.hitCarId]);
+    else if (event.hitKind === 'engine') pulsingEngineSides = new Set([event.targetSide]);
     const hpEl = event.targetSide === myRole ? myHpEl : oppHpEl;
     const fillEl = event.targetSide === myRole ? myHpFillEl : oppHpFillEl;
-    renderHp(hpEl, fillEl, event.hpAfter);
+    renderHp(hpEl, fillEl, event.hpAfter, computeHp(matchState, event.targetSide).maxHp);
     renderTrains(hpOverride());
     pulsingIds = new Set();
+    pulsingEngineSides = new Set();
 
     await wait(EVENT_GAP_MS);
   }

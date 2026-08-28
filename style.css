@@ -451,6 +451,29 @@ input:focus {
   filter: grayscale(0.6) brightness(0.7);
 }
 
+.car-box.junk {
+  filter: grayscale(1) brightness(0.45);
+}
+
+.hp-badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #c0342a;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .car-box.pulse {
     animation: car-pulse 0.4s ease;

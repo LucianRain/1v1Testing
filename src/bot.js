@@ -2,15 +2,17 @@
 // No lookahead - matches the "reasonable skill" bar from the design doc,
 // nothing more.
 
-import { CARDS, validTargets } from './game.js';
+import { CARDS, validTargets, computeHp } from './game.js';
 
 function carValue(car) {
   if (!car) return 0;
-  if (car.type === 'wagon') return car.dmgPerRound * 3;
-  if (car.type === 'sniper') return car.dmgPerRound * 3.5; // unblockable - a bit more worth removing than a wagon
-  if (car.type === 'armor') return car.blockCharges * 2;
-  if (car.type === 'repair') return car.healPerRound * 2.5;
-  return 0;
+  let base = 0;
+  if (car.type === 'wagon') base = car.dmgPerRound * 3;
+  else if (car.type === 'sniper') base = car.dmgPerRound * 3.5; // unblockable - a bit more worth removing than a wagon
+  else if (car.type === 'armor') base = car.blockCharges * 2;
+  else if (car.type === 'repair') base = car.healPerRound * 2.5;
+  // A car close to dying on its own is worth less to spend a card removing.
+  return base * (car.hp / car.maxHp);
 }
 
 function bestTarget(cars, ids) {
@@ -42,7 +44,8 @@ function scorePlay(state, side, cardId) {
       return { score: armorUp ? 6 : 4, target: null };
     }
     case 'repair': {
-      const missing = 10 - state[side].hp;
+      const { hp, maxHp } = computeHp(state, side);
+      const missing = maxHp - hp;
       return { score: 1 + missing * 0.6, target: null };
     }
     case 'armor': {

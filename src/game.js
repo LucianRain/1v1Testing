@@ -1,19 +1,19 @@
 // Pure game logic for Reroute. No DOM, no networking - deterministic so both
 // peers can run the exact same simulation from the same inputs and stay in sync.
 
-export const MAX_HP = 10;
+export const ENGINE_MAX_HP = 6;
 export const SUDDEN_DEATH_START_ROUND = 9;
 
 export const CARDS = {
-  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, desc: 'Couples on: 1 dmg every round' },
-  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, desc: 'Couples on: 1 dmg every round, ignores Armor Car' },
-  claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, desc: 'Couples on, then destroys one of their coupled cars' },
+  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 4, desc: 'Couples on: 4 HP, 1 dmg every round' },
+  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 3, desc: 'Couples on: 3 HP, 1 dmg every round, ignores Armor Car' },
+  claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
-  armor: { name: 'Armor Car', target: null, persistent: true, desc: 'Couples on: blocks your next hit(s)' },
-  repair: { name: 'Repair Car', target: null, persistent: true, desc: 'Couples on: heals 1 HP every round' },
+  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 4, desc: 'Couples on: 4 HP, blocks your next hit(s)' },
+  repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 3, desc: 'Couples on: 3 HP, heals 1 HP every round' },
   overcharge: { name: 'Overcharge', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
   reinforce: { name: 'Reinforced Coupling', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars' },
-  refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Recharge one of your spent Armor Cars' },
+  refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
 };
 
 const CARD_IDS = Object.keys(CARDS);
@@ -40,9 +40,13 @@ function shuffle(arr, rng) {
 
 // Two players draw from independently-shuffled copies of the same deck (one
 // of each card in CARDS), seeded off one shared match seed - fair, but
-// nothing to card-count.
+// nothing to card-count. 'battle' derives a third, independent RNG stream
+// used for in-round randomness (which car a hit/heal lands on) - both peers
+// derive the same stream from the same shared seed and advance it in lockstep
+// by running the identical sequence of resolveSetup/resolveTrigger calls.
+const SEED_SALTS = { host: 0x9e3779b9, client: 0x85ebca6b, battle: 0xc2b2ae35 };
 export function deriveSeed(masterSeed, role) {
-  const salt = role === 'host' ? 0x9e3779b9 : 0x85ebca6b;
+  const salt = SEED_SALTS[role] ?? 0;
   return (masterSeed ^ salt) >>> 0;
 }
 
@@ -114,14 +118,34 @@ export function ensureWeapon(deck, hand) {
   return newHand;
 }
 
-export function createMatchState() {
+// battleSeed seeds the shared, in-round randomness (which car a hit/heal
+// lands on) - both peers must create their match state with the same seed
+// (derived off the shared match seed via deriveSeed(seed, 'battle')) so their
+// simulations stay identical.
+export function createMatchState(battleSeed = 0) {
   return {
     round: 1,
     carCounter: 0,
-    host: { hp: MAX_HP, cars: [] },
-    client: { hp: MAX_HP, cars: [] },
+    battleRng: makeRng(battleSeed >>> 0),
+    host: { engine: { hp: ENGINE_MAX_HP, maxHp: ENGINE_MAX_HP }, cars: [] },
+    client: { engine: { hp: ENGINE_MAX_HP, maxHp: ENGINE_MAX_HP }, cars: [] },
     log: [],
   };
+}
+
+// A side's total remaining HP vs. its total possible HP right now (engine +
+// every coupled car, junked or not - a junked car still counts toward the
+// max, which is what makes it worth reviving with Refresh). The train's
+// total capacity grows as more cars couple on, and shrinks permanently only
+// when a car is actually removed (a Wrecking Car kill), not merely junked.
+export function computeHp(state, side) {
+  let hp = state[side].engine.hp;
+  let maxHp = state[side].engine.maxHp;
+  for (const car of state[side].cars) {
+    hp += car.hp;
+    maxHp += car.maxHp;
+  }
+  return { hp, maxHp };
 }
 
 function otherSide(side) {
@@ -147,28 +171,41 @@ function insertCar(cars, car, index) {
 
 // A car that's used up whatever made it useful but is still coupled: an
 // Armor Car with no charges left, or a Wrecking Car that's already fired.
+// Distinct from being junked (0 HP) - a spent car can still be perfectly
+// healthy, it's just done its job.
 export function isSpent(car) {
   if (car.type === 'armor') return car.blockCharges <= 0;
   if (car.type === 'claw') return car.fired;
   return false;
 }
 
+// A car that's been shot to 0 HP: it no longer does anything (no damage, no
+// healing, no blocking) and can't be targeted by any card except Refresh.
+export function isJunk(car) {
+  return car.hp <= 0;
+}
+
 export function validTargets(state, side, cardId) {
   const card = CARDS[cardId];
   if (card.target === 'enemy_car') {
-    const targets = state[otherSide(side)].cars.filter((c) => !c.protected);
+    let targets = state[otherSide(side)].cars.filter((c) => !c.protected && c.hp > 0);
     // A Wrecking Car can't snipe a car the instant it couples on - it needs
     // to survive at least one full round first.
-    return (cardId === 'claw' ? targets.filter((c) => !c.justCoupled) : targets).map((c) => c.id);
+    if (cardId === 'claw') targets = targets.filter((c) => !c.justCoupled);
+    return targets.map((c) => c.id);
   }
   if (card.target === 'own_car') {
-    if (cardId === 'reinforce') return state[side].cars.filter((c) => !c.protected).map((c) => c.id);
-    // Refresh only recharges Armor Cars now - reviving a Wrecking Car for a
-    // repeat kill was a degenerate combo (see balance notes below).
-    if (cardId === 'refresh') return state[side].cars.filter((c) => c.type === 'armor' && isSpent(c)).map((c) => c.id);
+    if (cardId === 'reinforce') return state[side].cars.filter((c) => !c.protected && c.hp > 0).map((c) => c.id);
+    if (cardId === 'refresh') {
+      // Anything not at full HP (damaged or junked), or a fully-healthy
+      // Armor Car that's just out of charges.
+      return state[side].cars
+        .filter((c) => c.hp < c.maxHp || (c.type === 'armor' && c.blockCharges <= 0))
+        .map((c) => c.id);
+    }
     if (cardId === 'overcharge') {
       // Sniper Car doesn't scale - that's the trade-off for ignoring armor.
-      return state[side].cars.filter((c) => c.type !== 'claw' && c.type !== 'sniper').map((c) => c.id);
+      return state[side].cars.filter((c) => c.type !== 'claw' && c.type !== 'sniper' && c.hp > 0).map((c) => c.id);
     }
     return state[side].cars.map((c) => c.id);
   }
@@ -177,11 +214,12 @@ export function validTargets(state, side, cardId) {
 
 const SIDES = ['host', 'client'];
 
-// Round resolution is split into three stages so the UI can animate each one
+// Round resolution is split into two stages so the UI can animate each one
 // separately: setup (sabotage/overcharge/reinforce/refresh + new cars
 // coupling on, including a Wrecking Car firing the instant it couples)
-// resolves first, then healing, then damage. Each stage mutates `state` in
-// place and returns its own log lines; run identically on both peers.
+// resolves first, then the trigger phase (every car's own recurring effect).
+// Each stage mutates `state` in place and returns its own log lines; run
+// identically on both peers.
 
 export function resolveSetup(state, plays) {
   const log = [];
@@ -197,13 +235,13 @@ export function resolveSetup(state, plays) {
     const opp = otherSide(s);
     if (play.card === 'sabotage') {
       const car = findCar(state[opp].cars, play.target);
-      if (car && !car.protected) {
+      if (car && !car.protected && car.hp > 0) {
         car.disabledThisRound = true;
         log.push(`${s} sabotages ${opp}'s ${car.type}`);
       }
     } else if (play.card === 'overcharge') {
       const car = findCar(state[s].cars, play.target);
-      if (car) {
+      if (car && car.hp > 0) {
         if (car.type === 'wagon') car.dmgPerRound += 1;
         if (car.type === 'armor') car.blockCharges += 1;
         if (car.type === 'repair') car.healPerRound += 1;
@@ -212,15 +250,27 @@ export function resolveSetup(state, plays) {
       }
     } else if (play.card === 'reinforce') {
       const car = findCar(state[s].cars, play.target);
-      if (car) {
+      if (car && car.hp > 0) {
         car.protected = true;
         log.push(`${s} reinforces their ${car.type}`);
       }
     } else if (play.card === 'refresh') {
       const car = findCar(state[s].cars, play.target);
-      if (car && car.type === 'armor' && isSpent(car)) {
-        car.blockCharges = 1;
-        log.push(`${s} refreshes their armor car`);
+      if (car) {
+        if (car.hp <= 0) {
+          // Destroyed (junked): a partial revival - it doesn't undo whatever
+          // already happened to it, a fired Wrecking Car stays fired/spent.
+          car.hp = Math.max(1, Math.ceil(car.maxHp / 2));
+          if (car.type === 'armor') car.blockCharges = 1;
+          log.push(`${s} revives their junked ${car.type}`);
+        } else if (car.hp < car.maxHp) {
+          car.hp = car.maxHp;
+          if (car.type === 'armor') car.blockCharges = 1;
+          log.push(`${s} refreshes their ${car.type} to full health`);
+        } else if (car.type === 'armor' && car.blockCharges <= 0) {
+          car.blockCharges = 1;
+          log.push(`${s} refreshes their armor car`);
+        }
       }
     }
   }
@@ -232,19 +282,19 @@ export function resolveSetup(state, plays) {
     const play = plays[s];
     let car = null;
     if (play.card === 'armor') {
-      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true };
+      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {
-      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true };
+      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
       log.push(`${s} couples an Artillery Wagon`);
     } else if (play.card === 'sniper') {
-      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true };
+      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
       log.push(`${s} couples a Sniper Car`);
     } else if (play.card === 'repair') {
-      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true };
+      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
       log.push(`${s} couples a Repair Car`);
     } else if (play.card === 'claw') {
-      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true };
+      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
       log.push(`${s} couples a Wrecking Car`);
     }
     if (car) insertCar(state[s].cars, car, play.insertIndex);
@@ -253,7 +303,7 @@ export function resolveSetup(state, plays) {
     if (play.card === 'claw' && car) {
       const opp = otherSide(s);
       const target = findCar(state[opp].cars, play.target);
-      if (target && !target.protected) {
+      if (target && !target.protected && target.hp > 0) {
         const targetIndex = state[opp].cars.indexOf(target);
         removeCar(state[opp].cars, target.id);
         log.push(`${s}'s wrecking car destroys ${opp}'s ${target.type}`);
@@ -286,20 +336,48 @@ function inTriggerOrder(cars) {
   return cars.slice().reverse();
 }
 
-// A single hit against a target: an available armor car absorbs it (one
-// charge, falls off once spent), otherwise it lands as real damage. Records
-// a structured event (kind, source car, whether it was blocked and by what,
-// and the target's hp immediately after) so the UI can replay the sequence
-// hit by hit - e.g. animating a wagon's projectile and only revealing the
-// damage once it "lands" - rather than just seeing the end result.
+// Every car (and the engine) still standing on a side is a candidate for a
+// random hit or heal - a junked car (0 HP) is never picked, so no shot is
+// ever wasted on something already destroyed.
+function hittablePool(state, side) {
+  const pool = [];
+  if (state[side].engine.hp > 0) pool.push({ kind: 'engine' });
+  for (const car of state[side].cars) if (car.hp > 0) pool.push({ kind: 'car', car });
+  return pool;
+}
+
+function healablePool(state, side) {
+  const pool = [];
+  const engine = state[side].engine;
+  if (engine.hp > 0 && engine.hp < engine.maxHp) pool.push({ kind: 'engine' });
+  for (const car of state[side].cars) if (car.hp > 0 && car.hp < car.maxHp) pool.push({ kind: 'car', car });
+  return pool;
+}
+
+function pickRandom(pool, rng) {
+  if (!pool.length) return null;
+  return pool[Math.floor(rng() * pool.length)];
+}
+
+// A single hit against a target side: an available armor car absorbs it
+// entirely (one charge, falls off once spent) - otherwise it lands on
+// whichever car (or the engine) the shared battle RNG randomly picks among
+// what's still standing. Records a structured event so the UI can replay the
+// sequence hit by hit - e.g. firing a projectile at the actual car it hit,
+// and only revealing the damage once it "lands".
 function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId, ignoresArmor = false) {
   if (amount <= 0) return;
 
   const armorCar = ignoresArmor
     ? null
-    : state[targetSide].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && !c.disabledThisRound);
+    : state[targetSide].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && c.hp > 0 && !c.disabledThisRound);
+
   let blocked = false;
   let blockedByCarId = null;
+  let hitKind = null; // 'engine' | 'car' | null (blocked, or nothing left standing)
+  let hitCarId = null;
+  let junked = false;
+  let targetHpAfter = null; // the specific engine/car's own HP after this hit
 
   if (armorCar) {
     armorCar.blockCharges--;
@@ -307,10 +385,23 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     blockedByCarId = armorCar.id;
     log.push(`${targetSide}'s armor car blocks ${sourceLabel}`);
     // Spent, not destroyed - it stays coupled, just inert until an
-    // Overcharge (or another Armor Car) gives it something to block with.
+    // Overcharge (or Refresh) gives it something to block with again.
   } else {
-    state[targetSide].hp -= amount;
-    log.push(`${targetSide} takes ${amount} damage from ${sourceLabel}`);
+    const picked = pickRandom(hittablePool(state, targetSide), state.battleRng);
+    if (picked && picked.kind === 'engine') {
+      state[targetSide].engine.hp = Math.max(0, state[targetSide].engine.hp - amount);
+      hitKind = 'engine';
+      targetHpAfter = state[targetSide].engine.hp;
+      log.push(`${targetSide}'s engine takes ${amount} damage from ${sourceLabel}`);
+    } else if (picked) {
+      const car = picked.car;
+      car.hp = Math.max(0, car.hp - amount);
+      hitKind = 'car';
+      hitCarId = car.id;
+      junked = car.hp <= 0;
+      targetHpAfter = car.hp;
+      log.push(`${targetSide}'s ${car.type} takes ${amount} damage from ${sourceLabel}${junked ? ' and is junked' : ''}`);
+    }
   }
 
   events.push({
@@ -321,16 +412,20 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     amount,
     blocked,
     blockedByCarId,
-    hpAfter: state[targetSide].hp,
+    hitKind,
+    hitCarId,
+    junked,
+    targetHpAfter,
+    hpAfter: computeHp(state, targetSide).hp,
   });
 }
 
-// One whole train triggers completely - every coupled, non-disabled car in
-// position order, whichever effect it has (heal or damage) - before the
-// other train starts, per the round's trigger order. Returns { log, events }
-// - events is the ordered hit-by-hit trace described in applyHit, above,
-// with heal entries in the same shape (kind: 'heal', blocked: false,
-// targetSide === attackerSide) so the UI can replay them the same way.
+// One whole train triggers completely - every coupled, non-disabled,
+// non-junked car in position order, whichever effect it has (heal or
+// damage) - before the other train starts, per the round's trigger order.
+// Returns { log, events } - events is the ordered hit-by-hit trace described
+// in applyHit, above, plus heal entries (kind: 'heal') shaped so the UI can
+// replay them the same way.
 export function resolveTrigger(state, plays) {
   const log = [];
   const events = [];
@@ -339,23 +434,32 @@ export function resolveTrigger(state, plays) {
     const target = otherSide(side);
 
     for (const car of inTriggerOrder(state[side].cars)) {
-      if (car.disabledThisRound) continue;
+      if (car.disabledThisRound || car.hp <= 0) continue;
       if (car.type === 'repair' && car.healPerRound > 0) {
-        const before = state[side].hp;
-        state[side].hp = Math.min(MAX_HP, state[side].hp + car.healPerRound);
-        const healed = state[side].hp - before;
-        if (healed > 0) {
-          log.push(`${side}'s repair car heals ${healed} HP`);
-          events.push({
-            kind: 'heal',
-            attackerSide: side,
-            attackerCarId: car.id,
-            targetSide: side,
-            amount: healed,
-            blocked: false,
-            blockedByCarId: null,
-            hpAfter: state[side].hp,
-          });
+        const picked = pickRandom(healablePool(state, side), state.battleRng);
+        if (picked) {
+          const healTarget = picked.kind === 'engine' ? state[side].engine : picked.car;
+          const before = healTarget.hp;
+          healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + car.healPerRound);
+          const healed = healTarget.hp - before;
+          if (healed > 0) {
+            const label = picked.kind === 'engine' ? 'engine' : picked.car.type;
+            log.push(`${side}'s repair car heals ${label} for ${healed} HP`);
+            events.push({
+              kind: 'heal',
+              attackerSide: side,
+              attackerCarId: car.id,
+              targetSide: side,
+              amount: healed,
+              blocked: false,
+              blockedByCarId: null,
+              hitKind: picked.kind,
+              hitCarId: picked.kind === 'car' ? picked.car.id : null,
+              targetHpAfter: healTarget.hp,
+              junked: false,
+              hpAfter: computeHp(state, side).hp,
+            });
+          }
         }
       } else if (car.type === 'wagon') {
         applyHit(state, target, car.dmgPerRound, log, `${side}'s artillery wagon`, events, 'wagon', side, car.id);
@@ -386,8 +490,8 @@ export function resolveRound(state, plays) {
 }
 
 export function checkWinner(state) {
-  const hostDead = state.host.hp <= 0;
-  const clientDead = state.client.hp <= 0;
+  const hostDead = computeHp(state, 'host').hp <= 0;
+  const clientDead = computeHp(state, 'client').hp <= 0;
   if (!hostDead && !clientDead) return null;
   if (hostDead && clientDead) return 'draw';
   return hostDead ? 'client' : 'host';
