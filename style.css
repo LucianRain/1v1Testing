@@ -102,6 +102,7 @@ html, body {
   font-size: 13px;
   background: transparent;
   color: rgba(255, 255, 255, 0.6);
+  transition: background 150ms ease, color 150ms ease;
 }
 
 .mode-toggle .mode-btn:hover {
@@ -117,6 +118,23 @@ html, body {
   font-size: 12px;
   opacity: 0.5;
   margin: 0 0 10px;
+}
+
+.mode-panel {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.mode-panel.panel-fade {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-panel {
+    transition: none;
+  }
 }
 
 .invite-block {

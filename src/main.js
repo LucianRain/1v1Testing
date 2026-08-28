@@ -1278,14 +1278,39 @@ btnJoin.addEventListener('click', () => {
 
 btnQuickJoin.addEventListener('click', () => joinRoom(quickJoinCodeEl.textContent));
 
+const PANEL_FADE_MS = 180; // must match .mode-panel's transition duration in style.css
+
 function setMatchMode(mode) {
   if (matchMode === mode) return;
   resetConnectionUI(); // leaving either mode mid-attempt shouldn't leave a stale peer/connection behind
   matchMode = mode;
   btnModeAuto.classList.toggle('active', mode === 'autoMode');
   btnModeInvite.classList.toggle('active', mode === 'inviteMode');
-  autoModePanel.classList.toggle('hidden', mode !== 'autoMode');
-  inviteModePanel.classList.toggle('hidden', mode !== 'inviteMode');
+
+  const fromEl = mode === 'autoMode' ? inviteModePanel : autoModePanel;
+  const toEl = mode === 'autoMode' ? autoModePanel : inviteModePanel;
+  crossfadePanels(fromEl, toEl);
+}
+
+// Fades the outgoing panel out, then swaps display and fades the incoming
+// one back in - avoids the instant hard-cut feel of a plain class toggle.
+function crossfadePanels(fromEl, toEl) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    fromEl.classList.add('hidden');
+    toEl.classList.remove('hidden');
+    return;
+  }
+
+  fromEl.classList.add('panel-fade');
+  setTimeout(() => {
+    fromEl.classList.add('hidden');
+    fromEl.classList.remove('panel-fade');
+
+    toEl.classList.add('panel-fade');
+    toEl.classList.remove('hidden');
+    void toEl.offsetWidth; // flush the faded-out starting state before animating in
+    toEl.classList.remove('panel-fade');
+  }, PANEL_FADE_MS);
 }
 
 // Tears down whatever connection attempt is in flight (either mode) and
