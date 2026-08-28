@@ -64,6 +64,7 @@ const PROJECTILE_MS = 950; // wagon projectile travel time
 const SNIPER_PROJECTILE_MS = 550; // sniper shot: smaller and faster than a wagon shell
 const EVENT_PAUSE_MS = 300; // non-projectile damage events (sudden death)
 const EVENT_GAP_MS = 150; // breather between damage events once one has landed
+const MIN_TRIGGER_TURN_MS = 750; // every car's own turn in the trigger phase - even a junked or no-op one - stays on screen at least this long
 const WRECK_LINE_MS = 380; // Wrecking Car's grapple line reaching the target
 const WRECK_PULL_MS = 900; // pull + derail + freeze + fade, one combined animation
 const SHIELD_PULSE_MS = 260; // a shield icon pulses once it absorbs a hit...
@@ -1390,7 +1391,7 @@ async function runResolution() {
     else if (ev.hitKind === 'car') shieldCarIds.add(ev.hitCarId);
   }
   shieldRevealOverride = { carIds: shieldCarIds, engineSides: shieldEngineSides };
-  await playTriggerEvents(trigger.events, preTriggerHp);
+  await playTriggerEvents(trigger.turns, trigger.events, preTriggerHp);
   hpRevealOverride = null;
   shieldRevealOverride = null;
   inTriggerPhase = false;
@@ -1521,57 +1522,76 @@ function fireProjectile(fromEl, toEl, variant, durationMs) {
   });
 }
 
-// Replays a resolved trigger phase event by event, one whole train (in
+// Replays a resolved trigger phase turn by turn, one whole train (in
 // position order) completely before the other starts, per resolveTrigger's
-// side-major ordering. Wagon and sniper shots fire a projectile (sniper's
-// smaller and faster) and only reveal their damage once it lands; heals and
-// other sources just get a short beat. Next car doesn't trigger until the
-// current one lands.
+// side-major ordering. Every car gets its own turn shown here - not just
+// the ones that landed a visible hit - so a junked car, or one sabotaged/
+// targetless into doing nothing, still pulses in its place instead of the
+// phase silently jumping past it; that's what makes the sequence itself
+// readable, not just the hits within it. Wagon and sniper shots fire a
+// projectile (sniper's smaller and faster) and only reveal their damage
+// once it lands; heals and other sources just get a short beat. Whatever a
+// turn's own animation adds up to, it's padded to MIN_TRIGGER_TURN_MS
+// before the next car's turn starts.
 // `displayedHp` starts at each side's HP from before this stage (matchState
 // itself is already fully resolved to the *end* of the stage by the time
 // this runs) and is only advanced to an event's hpAfter once that event has
 // actually landed - so neither the HP bar nor the train's position on the
 // rails moves early.
-async function playTriggerEvents(events, displayedHp) {
+async function playTriggerEvents(turns, events, displayedHp) {
   const hpOverride = () => ({ my: displayedHp[myRole], opp: displayedHp[oppRole] });
 
-  for (const event of events) {
-    if (event.kind === 'wagon' || event.kind === 'sniper') {
-      pulsingIds = new Set([event.attackerCarId]);
-      renderTrains(hpOverride());
-      pulsingIds = new Set();
-      const variant = event.kind === 'sniper' ? 'projectile-sniper' : null;
-      const duration = event.kind === 'sniper' ? SNIPER_PROJECTILE_MS : PROJECTILE_MS;
-      // Flies at whichever car (or the engine) the hit actually landed on.
-      const toEl = event.hitKind === 'car' ? carBoxEl(event.targetSide, event.hitCarId) : engineBoxEl(event.targetSide);
-      await fireProjectile(carBoxEl(event.attackerSide, event.attackerCarId), toEl, variant, duration);
-    } else {
-      await wait(EVENT_PAUSE_MS);
-    }
+  for (const turn of turns) {
+    const turnStarted = Date.now();
 
-    // Landed - now it's safe to reveal the result.
-    displayedHp[event.targetSide] = event.hpAfter;
-    if (hpRevealOverride) {
-      if (event.hitKind === 'engine') hpRevealOverride.engineHp[event.targetSide] = event.targetHpAfter;
-      else if (event.hitKind === 'car') hpRevealOverride.carHp.set(event.hitCarId, event.targetHpAfter);
-    }
-    if (event.hitKind === 'car') pulsingIds = new Set([event.hitCarId]);
-    else if (event.hitKind === 'engine') pulsingEngineSides = new Set([event.targetSide]);
-    const hpEl = event.targetSide === myRole ? myHpEl : oppHpEl;
-    const fillEl = event.targetSide === myRole ? myHpFillEl : oppHpFillEl;
-    renderHp(hpEl, fillEl, event.hpAfter, computeHp(matchState, event.targetSide).maxHp);
+    // This car's own turn has come up - pulse it regardless of what (if
+    // anything) it goes on to do below, including a junked car that can't
+    // act at all.
+    pulsingIds = new Set([turn.carId]);
     renderTrains(hpOverride());
     pulsingIds = new Set();
-    pulsingEngineSides = new Set();
 
-    if (event.shielded) {
-      await playShieldBreak(event.targetSide, event.hitKind, event.hitCarId);
-      if (event.hitKind === 'engine') shieldRevealOverride.engineSides.delete(event.targetSide);
-      else if (event.hitKind === 'car') shieldRevealOverride.carIds.delete(event.hitCarId);
+    for (const event of events.slice(turn.eventStart, turn.eventEnd)) {
+      if (event.kind === 'wagon' || event.kind === 'sniper') {
+        pulsingIds = new Set([event.attackerCarId]);
+        renderTrains(hpOverride());
+        pulsingIds = new Set();
+        const variant = event.kind === 'sniper' ? 'projectile-sniper' : null;
+        const duration = event.kind === 'sniper' ? SNIPER_PROJECTILE_MS : PROJECTILE_MS;
+        // Flies at whichever car (or the engine) the hit actually landed on.
+        const toEl = event.hitKind === 'car' ? carBoxEl(event.targetSide, event.hitCarId) : engineBoxEl(event.targetSide);
+        await fireProjectile(carBoxEl(event.attackerSide, event.attackerCarId), toEl, variant, duration);
+      } else {
+        await wait(EVENT_PAUSE_MS);
+      }
+
+      // Landed - now it's safe to reveal the result.
+      displayedHp[event.targetSide] = event.hpAfter;
+      if (hpRevealOverride) {
+        if (event.hitKind === 'engine') hpRevealOverride.engineHp[event.targetSide] = event.targetHpAfter;
+        else if (event.hitKind === 'car') hpRevealOverride.carHp.set(event.hitCarId, event.targetHpAfter);
+      }
+      if (event.hitKind === 'car') pulsingIds = new Set([event.hitCarId]);
+      else if (event.hitKind === 'engine') pulsingEngineSides = new Set([event.targetSide]);
+      const hpEl = event.targetSide === myRole ? myHpEl : oppHpEl;
+      const fillEl = event.targetSide === myRole ? myHpFillEl : oppHpFillEl;
+      renderHp(hpEl, fillEl, event.hpAfter, computeHp(matchState, event.targetSide).maxHp);
       renderTrains(hpOverride());
+      pulsingIds = new Set();
+      pulsingEngineSides = new Set();
+
+      if (event.shielded) {
+        await playShieldBreak(event.targetSide, event.hitKind, event.hitCarId);
+        if (event.hitKind === 'engine') shieldRevealOverride.engineSides.delete(event.targetSide);
+        else if (event.hitKind === 'car') shieldRevealOverride.carIds.delete(event.hitCarId);
+        renderTrains(hpOverride());
+      }
+
+      await wait(EVENT_GAP_MS);
     }
 
-    await wait(EVENT_GAP_MS);
+    const elapsed = Date.now() - turnStarted;
+    if (elapsed < MIN_TRIGGER_TURN_MS) await wait(MIN_TRIGGER_TURN_MS - elapsed);
   }
 }
 

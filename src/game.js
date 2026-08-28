@@ -557,10 +557,23 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
 export function resolveTrigger(state, plays) {
   const log = [];
   const events = [];
+  // One entry per car in fullTriggerOrder (junked cars included) - the UI
+  // uses this to pulse every car in turn order, even one that's junked or
+  // does nothing this round, so the whole trigger phase reads as a
+  // sequence instead of only the cars that happened to land a visible hit.
+  // eventStart/eventEnd slice into `events` for whatever this specific
+  // car's own turn produced (empty range for a junked or no-op turn).
+  // Sudden death's events, appended after this loop, aren't tied to any
+  // one car's turn and so aren't covered by any range here.
+  const turns = [];
 
   for (const { side, car } of fullTriggerOrder(state)) {
     const target = otherSide(side);
-    if (car.hp <= 0) continue;
+    if (car.hp <= 0) {
+      turns.push({ side, carId: car.id, junk: true, eventStart: events.length, eventEnd: events.length });
+      continue;
+    }
+    const eventStart = events.length;
     // Sabotage no longer fully skips a car's turn - it knocks one upgrade
     // level off its output for the round instead (see the manual Sabotage
     // card and the Saboteur car's own passive, below), floored at 0. An
@@ -659,10 +672,12 @@ export function resolveTrigger(state, plays) {
         log.push(`${side}'s saboteur sabotages ${target}'s ${victim.type}`);
       }
     }
+    turns.push({ side, carId: car.id, junk: false, eventStart, eventEnd: events.length });
   }
 
   // Sudden death: escalating chip damage once round 9+ is reached, after
-  // every car's own trigger.
+  // every car's own trigger - not tied to any one car's turn, so it's not
+  // covered by any range in `turns` above.
   if (state.round >= SUDDEN_DEATH_START_ROUND) {
     const chip = state.round - (SUDDEN_DEATH_START_ROUND - 1);
     for (const s of sidePriority(state)) applyHit(state, s, chip, log, 'sudden death', events, 'suddendeath', null, null);
@@ -673,7 +688,7 @@ export function resolveTrigger(state, plays) {
   // resolveSetup clears them at the top of the NEXT round, right before
   // that round's Armor Cars roll fresh ones.
   state.round += 1;
-  return { log, events };
+  return { log, events, turns };
 }
 
 // Convenience: run both stages back to back, for tests/simulations that
