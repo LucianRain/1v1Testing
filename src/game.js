@@ -12,7 +12,7 @@ export const CARDS = {
   armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 4, desc: 'Couples on: 4 HP, blocks your next hit(s)' },
   repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 3, desc: 'Couples on: 3 HP, heals 1 HP every round' },
   overcharge: { name: 'Overcharge', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
-  reinforce: { name: 'Reinforced Coupling', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars' },
+  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars' },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
 };
 
