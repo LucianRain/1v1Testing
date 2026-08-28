@@ -17,10 +17,12 @@ export const CARDS = {
 };
 
 const CARD_IDS = Object.keys(CARDS);
-// The Wrecking Car, Sniper Car, and Shield are pulled from the draw pool for
-// now (not deleted from CARDS - their mechanics and rendering stay intact in
-// case they come back).
-const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'reinforce');
+// The Wrecking Car, Sniper Car, Shield, and Upgrade are pulled from the draw
+// pool for now (not deleted from CARDS - their mechanics and rendering stay
+// intact in case they come back). Upgrade is still fully functional via the
+// merge-on-duplicate mechanic (see resolveSetup) - it just can't be drawn
+// and played as its own card anymore.
+const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'reinforce' && id !== 'overcharge');
 
 // mulberry32 - small deterministic PRNG, good enough for shuffling a fair deck.
 export function makeRng(seed) {
