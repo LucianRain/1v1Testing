@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, UPGRADABLE_TYPES, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner, reorderCar } from './game.js';
+import { CARDS, UPGRADABLE_TYPES, createDeck, draw, redrawHand, ensurePlayable, ensureNoDuplicateMedic, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner, reorderCar } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -531,28 +531,24 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo, isMine) {
     box.innerHTML = `<strong>${CARDS[car.type].name}</strong><span>${stat}</span>`;
     box.appendChild(hpDots(hp, maxHp));
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
-    // One upgrade = one flag - a car upgraded multiple times (via Upgrade,
-    // merging in a duplicate, or both) shows one stacked flag per level. A
-    // staged-but-not-yet-resolved Upgrade/merge previews its resolved level
-    // (which resets to 1 rather than stacking, if this car is being revived
-    // from junk - see myStagedUpgradePreview).
-    const overchargeCount = previewingThisUpgrade ? upgradePreview.upgradeLevel : car.upgradeLevel || 0;
+    // An unupgraded car is level 1 (not shown at all) - each upgrade (via
+    // Upgrade, merging in a duplicate, or both) bumps the number shown by
+    // one, so the first upgrade reads "Level 2", not a second stacked badge.
+    // A staged-but-not-yet-resolved Upgrade/merge previews its resolved
+    // level (which resets to 1 rather than stacking, if this car is being
+    // revived from junk - see myStagedUpgradePreview).
+    const upgradeLevel = previewingThisUpgrade ? upgradePreview.upgradeLevel : car.upgradeLevel || 0;
     const showShield =
       car.shieldedThisRound || (shieldRevealOverride && car.id != null && shieldRevealOverride.carIds.has(car.id));
     const showDisabled = car.disabledThisRound || previewFlag === 'disabled';
-    if (overchargeCount > 0 || showShield || showDisabled) {
+    if (upgradeLevel > 0 || showShield || showDisabled) {
       const flagRow = document.createElement('div');
       flagRow.className = 'car-flags';
-      if (overchargeCount > 0) {
-        const stack = document.createElement('div');
-        stack.className = 'overcharge-stack';
-        for (let i = 0; i < overchargeCount; i++) {
-          const flag = document.createElement('div');
-          flag.className = 'car-flag overcharge';
-          flag.textContent = 'Upgraded';
-          stack.appendChild(flag);
-        }
-        flagRow.appendChild(stack);
+      if (upgradeLevel > 0) {
+        const flag = document.createElement('div');
+        flag.className = 'car-flag overcharge';
+        flag.textContent = `Level ${upgradeLevel + 1}`;
+        flagRow.appendChild(flag);
       }
       if (showShield) {
         const flag = document.createElement('div');
@@ -1600,8 +1596,12 @@ function finishRound(plays) {
   if (plays[myRole].card !== null) myHand.push(draw(myDeck));
   vacatedCardId = null;
   if (vsBot && plays[oppRole].card !== null) botHand.push(draw(botDeck));
+  myHand = ensureNoDuplicateMedic(matchState, myRole, myDeck, myHand);
   myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
-  if (vsBot) botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
+  if (vsBot) {
+    botHand = ensureNoDuplicateMedic(matchState, oppRole, botDeck, botHand);
+    botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
+  }
 
   const winner = checkWinner(matchState);
   if (winner) {

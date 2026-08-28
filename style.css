@@ -417,13 +417,6 @@ input:focus {
   pointer-events: none;
 }
 
-.overcharge-stack {
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: center;
-  gap: 2px;
-}
-
 .car-flag {
   display: flex;
   align-items: center;

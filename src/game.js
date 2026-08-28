@@ -115,6 +115,33 @@ export function ensurePlayable(state, side, deck, hand) {
   return newHand;
 }
 
+// Keeps a second Medic out of hand while a living one is already coupled on
+// the train - it would just sit there with nothing useful to do (its own
+// passive already revives any junked friendly car, medic included - see
+// medicPool). Only checks for a LIVING medic: once that one's junked, a
+// fresh Medic is fair game again, and its own passive can revive the junked
+// one in turn - see test-medic.mjs. Draws that don't help go back to the
+// bottom of the pile rather than being lost.
+export function ensureNoDuplicateMedic(state, side, deck, hand) {
+  if (!state[side].cars.some((c) => c.type === 'medic' && c.hp > 0)) return hand;
+  const idx = hand.indexOf('medic');
+  if (idx === -1) return hand;
+
+  const rejected = [];
+  let found = null;
+  for (let i = 0; i < 20 && found === null; i++) {
+    const candidate = draw(deck);
+    if (candidate !== 'medic') found = candidate;
+    else rejected.push(candidate);
+  }
+  deck.pile = rejected.concat(deck.pile);
+  if (found === null) return hand;
+
+  const newHand = hand.slice();
+  newHand[idx] = found;
+  return newHand;
+}
+
 // Guarantees the opening hand has some way to actually deal damage: if it
 // has no weapon (Artillery Wagon / Sniper Car), keep drawing until one turns
 // up and swap it in for the first card. Draws that don't help go back to the
