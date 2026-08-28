@@ -57,6 +57,30 @@ html, body {
   margin: 0 0 24px;
 }
 
+.btn-join-local {
+  display: block;
+  width: 100%;
+  margin: 24px 0 0;
+  padding: 14px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #3fae5c, #58cc73);
+  color: white;
+  font-weight: 700;
+  font-size: 16px;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.1s ease, opacity 0.1s ease;
+}
+
+.btn-join-local:hover {
+  opacity: 0.9;
+}
+
+.btn-join-local:active {
+  transform: scale(0.96);
+}
+
 .cross-link {
   margin: 24px 0 0;
   font-size: 13px;
