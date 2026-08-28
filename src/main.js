@@ -101,7 +101,14 @@ let dragState = null; // in-progress drag of a train-car hand card
 let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Overcharge/Reinforce, or aiming a placed Wrecking Car)
 let reorderDragState = null; // { carId, ghost, indicator, insertIndex, overTrain, sourceBoxEl } - in-progress drag of an already-coupled car on my own train, reordering it
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
-let stagedPlay = null; // { cardId, handIdx, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay); handIdx is only kept around so renderHand can hold that slot's layout in place.
+let stagedPlay = null; // { cardId, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay).
+// { handIdx, cardId } for whichever hand slot a play vacated - set the
+// instant it's staged, and outlives stagedPlay/myPlay (which both go back
+// to null well before the round actually resolves) all the way through to
+// finishRound, which is what actually fills the slot back in. renderHand
+// uses this the whole time to redraw that slot as an invisible same-sized
+// placeholder rather than letting the kept card(s) resize/reflow into it.
+let playedHandSlot = null;
 let lastRenderedHandSlots = []; // cardId shown in each hand slot on the previous renderHand() call (or null) - whichever slot changed gets the slide-in-from-the-right entrance animation
 let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
 let myLastTrainWidth = null;
@@ -216,6 +223,7 @@ function startMatch(seed) {
   oppPendingInsertIndex = null;
   awaitingAim = null;
   stagedPlay = null;
+  playedHandSlot = null;
   phantomWrecks = [];
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
@@ -651,12 +659,16 @@ function renderHand() {
   // Always lay out exactly HAND_SIZE slots so the remaining card(s) never
   // resize or reposition once one is played - the vacated slot (already
   // spliced out of myHand in stagePlay) renders as an invisible placeholder
-  // in its original spot instead of collapsing the layout around it.
+  // in its original spot instead of collapsing the layout around it. This
+  // uses playedHandSlot, not stagedPlay - stagedPlay goes back to null the
+  // instant End Turn is pressed (well before the round actually resolves
+  // and finishRound draws the replacement), but the slot stays vacated the
+  // whole time in between.
   const slots = [];
-  if (stagedPlay) {
+  if (playedHandSlot) {
     let nextRealIdx = 0;
     for (let slot = 0; slot < HAND_SIZE; slot++) {
-      slots.push(slot === stagedPlay.handIdx ? null : myHand[nextRealIdx++]);
+      slots.push(slot === playedHandSlot.handIdx ? null : myHand[nextRealIdx++]);
     }
   } else {
     for (let slot = 0; slot < HAND_SIZE; slot++) slots.push(myHand[slot] ?? null);
@@ -668,7 +680,7 @@ function renderHand() {
       // a hand-car-box sizes itself by its own content (width: max-content),
       // so an empty placeholder would collapse to the wrong width and shift
       // the remaining real card's position (since #hand centers its row).
-      const vacatedId = stagedPlay.cardId;
+      const vacatedId = playedHandSlot.cardId;
       const vacatedCard = CARDS[vacatedId];
       const placeholder = document.createElement('div');
       if (vacatedCard.persistent) {
@@ -1225,10 +1237,8 @@ function stagePlay(cardId, handIdx, target, insertIndex, refreshTarget) {
   insertIndex = insertIndex ?? null;
   refreshTarget = refreshTarget ?? null;
   myHand.splice(handIdx, 1);
-  // handIdx is kept here (unused for submitting the play itself) so
-  // renderHand can redraw the vacated slot as an invisible placeholder
-  // rather than letting the remaining card(s) resize/reflow into its spot.
-  stagedPlay = { cardId, handIdx, target, insertIndex, refreshTarget };
+  stagedPlay = { cardId, target, insertIndex, refreshTarget };
+  playedHandSlot = { handIdx, cardId };
   myPendingCar = pendingCarFor(cardId, target);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
@@ -1552,7 +1562,14 @@ async function playShieldBreak(side, hitKind, hitCarId) {
 }
 
 function finishRound(plays) {
-  if (plays[myRole].card !== null) myHand.push(draw(myDeck));
+  if (plays[myRole].card !== null) {
+    // Goes back into the exact slot the played card vacated (see
+    // playedHandSlot), not just appended - otherwise the kept card would
+    // shift from slot 1 to slot 0 whenever the FIRST card was the one played.
+    const insertAt = playedHandSlot ? Math.min(playedHandSlot.handIdx, myHand.length) : myHand.length;
+    myHand.splice(insertAt, 0, draw(myDeck));
+  }
+  playedHandSlot = null;
   if (vsBot && plays[oppRole].card !== null) botHand.push(draw(botDeck));
   myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
   if (vsBot) botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
