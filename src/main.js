@@ -52,7 +52,7 @@ const btnRestart = document.getElementById('btn-restart');
 const net = new PeerNetwork();
 
 const RESUME_ROOM_KEY = 'reroute-hosted-room'; // localStorage: a room I created but nobody had joined yet
-const ROOM_CODE_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
+const ROOM_CODE_RE = /^[A-Z]{4}$/; // a plain 4-letter word room code
 const AUTO_LOBBY_ID = 'reroute-auto-lobby-v1'; // fixed, well-known id: autoMode pairs up whoever reaches it first
 const AUTO_JOIN_TIMEOUT_MS = 4000; // fail fast when trying to join - a real "nobody's here" is near-instant anyway
 const AUTO_RETRY_DELAY_MS = 3000; // how long to wait before retrying when the lobby's already full
@@ -1314,7 +1314,7 @@ if (resumeId) {
 // shared one), offer a one-click join. Silently does nothing if the browser
 // blocks clipboard reads without a prior gesture, or there's no permission.
 navigator.clipboard?.readText().then((text) => {
-  const code = text.trim().toUpperCase().replace(/^ROOM-/, '');
+  const code = text.replace(/\s+/g, '').toUpperCase().replace(/^ROOM-/, '');
   if (ROOM_CODE_RE.test(code)) {
     quickJoinCodeEl.textContent = code;
     setQuickActionVisibility(btnQuickJoin, true);
