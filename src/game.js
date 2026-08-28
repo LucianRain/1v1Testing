@@ -9,14 +9,17 @@ export const CARDS = {
   sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 3, desc: 'Couples on: 3 HP, 1 dmg every round in one shot, ignores Armor Car, targets the Wrecking Car first if one is alive' },
   claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
-  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 4, desc: 'Couples on: 4 HP, blocks your next hit(s)' },
+  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 4, desc: 'Couples on: 4 HP, blocks your next hit(s); each round, shields one random friendly car until the trigger phase ends' },
   repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 3, desc: 'Couples on: 3 HP, heals 1 HP every round' },
   overcharge: { name: 'Upgrade', target: 'own_car', persistent: false, desc: 'Upgrade one of your coupled cars' },
-  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars' },
+  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars for one round' },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
 };
 
 const CARD_IDS = Object.keys(CARDS);
+// The Wrecking Car is pulled from the draw pool for now (not deleted from
+// CARDS - its mechanics and rendering stay intact in case it comes back).
+const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw');
 
 // mulberry32 - small deterministic PRNG, good enough for shuffling a fair deck.
 export function makeRng(seed) {
@@ -52,11 +55,11 @@ export function deriveSeed(masterSeed, role) {
 
 export function createDeck(seed) {
   const rng = makeRng(seed);
-  return { rng, pile: shuffle(CARD_IDS, rng) };
+  return { rng, pile: shuffle(DRAWABLE_CARD_IDS, rng) };
 }
 
 export function draw(deck) {
-  if (deck.pile.length === 0) deck.pile = shuffle(CARD_IDS, deck.rng);
+  if (deck.pile.length === 0) deck.pile = shuffle(DRAWABLE_CARD_IDS, deck.rng);
   return deck.pile.pop();
 }
 
@@ -127,8 +130,8 @@ export function createMatchState(battleSeed = 0) {
     round: 1,
     carCounter: 0,
     battleRng: makeRng(battleSeed >>> 0),
-    host: { engine: { hp: ENGINE_MAX_HP, maxHp: ENGINE_MAX_HP }, cars: [] },
-    client: { engine: { hp: ENGINE_MAX_HP, maxHp: ENGINE_MAX_HP }, cars: [] },
+    host: { engine: { hp: ENGINE_MAX_HP, maxHp: ENGINE_MAX_HP, shieldedThisRound: false }, cars: [] },
+    client: { engine: { hp: ENGINE_MAX_HP, maxHp: ENGINE_MAX_HP, shieldedThisRound: false }, cars: [] },
     log: [],
   };
 }
@@ -225,7 +228,10 @@ export function resolveSetup(state, plays) {
   const log = [];
   const wrecks = []; // { attackerSide, attackerCarId, targetSide, targetCarId, targetCarSnapshot, targetIndex }
 
-  for (const s of SIDES) for (const car of state[s].cars) { car.disabledThisRound = false; car.justCoupled = false; }
+  // The Shield card protects for exactly one round: whatever a car had
+  // going into this round expires now, before this round's own Shield plays
+  // (if any) are applied below.
+  for (const s of SIDES) for (const car of state[s].cars) { car.disabledThisRound = false; car.justCoupled = false; car.protected = false; }
   for (const s of SIDES) if (plays[s].card === null) log.push(`${s} passes`);
 
   // sabotage / overcharge / reinforce / refresh - claw is handled below,
@@ -283,19 +289,19 @@ export function resolveSetup(state, plays) {
     const play = plays[s];
     let car = null;
     if (play.card === 'armor') {
-      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
+      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {
-      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
+      car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
       log.push(`${s} couples an Artillery Wagon`);
     } else if (play.card === 'sniper') {
-      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
+      car = { id: ++state.carCounter, type: 'sniper', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
       log.push(`${s} couples a Sniper Car`);
     } else if (play.card === 'repair') {
-      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
+      car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
       log.push(`${s} couples a Repair Car`);
     } else if (play.card === 'claw') {
-      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
+      car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
       log.push(`${s} couples a Wrecking Car`);
     }
     if (car) insertCar(state[s].cars, car, play.insertIndex);
@@ -324,9 +330,10 @@ export function resolveSetup(state, plays) {
   return { log, wrecks };
 }
 
-// Which player's train triggers first alternates every round, so neither
-// side has a standing advantage in the trigger phase.
-function triggerOrder(state) {
+// A tie-break only: when a car from each side would otherwise fire at the
+// exact same position-rank (see fullTriggerOrder), priority alternates every
+// round so neither side has a standing advantage.
+function sidePriority(state) {
   return state.round % 2 === 1 ? ['host', 'client'] : ['client', 'host'];
 }
 
@@ -337,23 +344,52 @@ function inTriggerOrder(cars) {
   return cars.slice().reverse();
 }
 
-// A living, coupled car is a candidate for a random hit - a junked car (0
-// HP) is never picked, so no shot is ever wasted on something already
-// destroyed. The Engine is the last thing standing: it's only a valid hit
-// target once every coupled car on that side has been killed.
-function hittablePool(state, side) {
-  const livingCars = state[side].cars.filter((c) => c.hp > 0).map((car) => ({ kind: 'car', car }));
-  if (livingCars.length > 0) return livingCars;
-  return state[side].engine.hp > 0 ? [{ kind: 'engine' }] : [];
+// The trigger phase's firing order is determined ONLY by each car's position
+// in its own train (engine end first) - never by which side it's on. A
+// rank-0 car (right next to its engine) on either side fires before any
+// rank-1 car on either side, and so on. Two cars tied on rank (one from each
+// side) are broken by sidePriority. This is what stops a heal from jumping
+// ahead of an attack just because of whose "turn" it technically is.
+function fullTriggerOrder(state) {
+  const priority = sidePriority(state);
+  const ranked = [];
+  for (const side of SIDES) {
+    inTriggerOrder(state[side].cars).forEach((car, rank) => ranked.push({ side, car, rank }));
+  }
+  ranked.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return priority.indexOf(a.side) - priority.indexOf(b.side);
+  });
+  return ranked;
 }
 
-// Sniper Cars hunt the Wrecking Car first - if one is still alive on the
-// target side, that's the only candidate; otherwise falls back to the usual
-// living-cars-then-engine pool.
+// A living, coupled, unshielded car is a candidate for a random hit - a
+// junked car (0 HP) is never picked, so no shot is ever wasted on something
+// already destroyed. The Engine is the last thing standing: it's only a
+// valid hit target once every coupled car on that side has been killed (or
+// is shielded).
+function hittablePool(state, side) {
+  const livingCars = state[side].cars.filter((c) => c.hp > 0 && !c.shieldedThisRound).map((car) => ({ kind: 'car', car }));
+  if (livingCars.length > 0) return livingCars;
+  return state[side].engine.hp > 0 && !state[side].engine.shieldedThisRound ? [{ kind: 'engine' }] : [];
+}
+
+// Sniper Cars hunt the Wrecking Car first - if one is still alive (and
+// unshielded) on the target side, that's the only candidate; otherwise falls
+// back to the usual living-cars-then-engine pool.
 function hittablePoolPreferClaw(state, side) {
-  const livingClaws = state[side].cars.filter((c) => c.type === 'claw' && c.hp > 0).map((car) => ({ kind: 'car', car }));
+  const livingClaws = state[side].cars.filter((c) => c.type === 'claw' && c.hp > 0 && !c.shieldedThisRound).map((car) => ({ kind: 'car', car }));
   if (livingClaws.length > 0) return livingClaws;
   return hittablePool(state, side);
+}
+
+// Armor's protective pick isn't restricted by the "engine only once
+// everything else is dead" rule hittablePool enforces for incoming attacks -
+// it can shield the engine directly if that's what the roll lands on.
+function shieldablePool(state, side) {
+  const pool = state[side].cars.filter((c) => c.hp > 0).map((car) => ({ kind: 'car', car }));
+  if (state[side].engine.hp > 0) pool.push({ kind: 'engine' });
+  return pool;
 }
 
 function healablePool(state, side) {
@@ -430,67 +466,85 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
   });
 }
 
-// One whole train triggers completely - every coupled, non-disabled,
-// non-junked car in position order, whichever effect it has (heal or
-// damage) - before the other train starts, per the round's trigger order.
-// Returns { log, events } - events is the ordered hit-by-hit trace described
-// in applyHit, above, plus heal entries (kind: 'heal') shaped so the UI can
-// replay them the same way.
+// Every coupled, non-disabled, non-junked car triggers its own effect (heal
+// or damage) in fullTriggerOrder - purely by train position, never grouped
+// by side. Returns { log, events } - events is the ordered hit-by-hit trace
+// described in applyHit, above, plus heal entries (kind: 'heal') shaped so
+// the UI can replay them the same way.
 export function resolveTrigger(state, plays) {
   const log = [];
   const events = [];
 
-  for (const side of triggerOrder(state)) {
-    const target = otherSide(side);
-
-    for (const car of inTriggerOrder(state[side].cars)) {
-      if (car.disabledThisRound || car.hp <= 0) continue;
-      if (car.type === 'repair' && car.healPerRound > 0) {
-        const picked = pickRandom(healablePool(state, side), state.battleRng);
+  // Armor Car passively shields one random friendly car (or the engine)
+  // each round, for the rest of this trigger phase only - it doesn't carry
+  // into the next round's card-targeting window like the Shield card does.
+  for (const s of SIDES) {
+    for (const car of state[s].cars) {
+      if (car.type === 'armor' && car.hp > 0 && !car.disabledThisRound) {
+        const picked = pickRandom(shieldablePool(state, s), state.battleRng);
         if (picked) {
-          const healTarget = picked.kind === 'engine' ? state[side].engine : picked.car;
-          const before = healTarget.hp;
-          healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + car.healPerRound);
-          const healed = healTarget.hp - before;
-          if (healed > 0) {
-            const label = picked.kind === 'engine' ? 'engine' : picked.car.type;
-            log.push(`${side}'s repair car heals ${label} for ${healed} HP`);
-            events.push({
-              kind: 'heal',
-              attackerSide: side,
-              attackerCarId: car.id,
-              targetSide: side,
-              amount: healed,
-              blocked: false,
-              blockedByCarId: null,
-              hitKind: picked.kind,
-              hitCarId: picked.kind === 'car' ? picked.car.id : null,
-              targetHpAfter: healTarget.hp,
-              junked: false,
-              hpAfter: computeHp(state, side).hp,
-            });
-          }
+          if (picked.kind === 'engine') state[s].engine.shieldedThisRound = true;
+          else picked.car.shieldedThisRound = true;
         }
-      } else if (car.type === 'wagon') {
-        // Each point of dmgPerRound (base 1, +1 per Upgrade) is its own
-        // separately-aimed 1-dmg shot, not one lump hit - an upgraded wagon
-        // can spread damage across several enemy cars in a single round.
-        for (let i = 0; i < car.dmgPerRound; i++) {
-          applyHit(state, target, 1, log, `${side}'s artillery wagon`, events, 'wagon', side, car.id);
-        }
-      } else if (car.type === 'sniper') {
-        // Unlike the wagon, a sniper always fires its whole dmgPerRound as
-        // one shot - and it always goes for the Wrecking Car first.
-        applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, true, hittablePoolPreferClaw);
       }
     }
   }
 
-  // Sudden death: escalating chip damage once round 9+ is reached - after
-  // every car's own trigger, still in the round's side-major order.
+  for (const { side, car } of fullTriggerOrder(state)) {
+    const target = otherSide(side);
+    if (car.disabledThisRound || car.hp <= 0) continue;
+    if (car.type === 'repair' && car.healPerRound > 0) {
+      const picked = pickRandom(healablePool(state, side), state.battleRng);
+      if (picked) {
+        const healTarget = picked.kind === 'engine' ? state[side].engine : picked.car;
+        const before = healTarget.hp;
+        healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + car.healPerRound);
+        const healed = healTarget.hp - before;
+        if (healed > 0) {
+          const label = picked.kind === 'engine' ? 'engine' : picked.car.type;
+          log.push(`${side}'s repair car heals ${label} for ${healed} HP`);
+          events.push({
+            kind: 'heal',
+            attackerSide: side,
+            attackerCarId: car.id,
+            targetSide: side,
+            amount: healed,
+            blocked: false,
+            blockedByCarId: null,
+            hitKind: picked.kind,
+            hitCarId: picked.kind === 'car' ? picked.car.id : null,
+            targetHpAfter: healTarget.hp,
+            junked: false,
+            hpAfter: computeHp(state, side).hp,
+          });
+        }
+      }
+    } else if (car.type === 'wagon') {
+      // Each point of dmgPerRound (base 1, +1 per Upgrade) is its own
+      // separately-aimed 1-dmg shot, not one lump hit - an upgraded wagon
+      // can spread damage across several enemy cars in a single round.
+      for (let i = 0; i < car.dmgPerRound; i++) {
+        applyHit(state, target, 1, log, `${side}'s artillery wagon`, events, 'wagon', side, car.id);
+      }
+    } else if (car.type === 'sniper') {
+      // Unlike the wagon, a sniper always fires its whole dmgPerRound as
+      // one shot - and it always goes for the Wrecking Car first.
+      applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, true, hittablePoolPreferClaw);
+    }
+  }
+
+  // Sudden death: escalating chip damage once round 9+ is reached, after
+  // every car's own trigger.
   if (state.round >= SUDDEN_DEATH_START_ROUND) {
     const chip = state.round - (SUDDEN_DEATH_START_ROUND - 1);
-    for (const s of triggerOrder(state)) applyHit(state, s, chip, log, 'sudden death', events, 'suddendeath', null, null);
+    for (const s of sidePriority(state)) applyHit(state, s, chip, log, 'sudden death', events, 'suddendeath', null, null);
+  }
+
+  // This round's passive Armor shields expire now - they don't protect
+  // against next round's card-targeting the way the Shield card does.
+  for (const s of SIDES) {
+    state[s].engine.shieldedThisRound = false;
+    for (const car of state[s].cars) car.shieldedThisRound = false;
   }
 
   state.round += 1;

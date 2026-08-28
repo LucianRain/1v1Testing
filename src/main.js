@@ -264,8 +264,8 @@ function renderTrains(hpOverride) {
   }
 
   const flagPreviews = myStagedFlagPreviews();
-  const myEngine = { hp: displayEngineHp(myRole), maxHp: matchState[myRole].engine.maxHp, pulse: pulsingEngineSides.has(myRole) };
-  const oppEngine = { hp: displayEngineHp(oppRole), maxHp: matchState[oppRole].engine.maxHp, pulse: pulsingEngineSides.has(oppRole) };
+  const myEngine = { hp: displayEngineHp(myRole), maxHp: matchState[myRole].engine.maxHp, pulse: pulsingEngineSides.has(myRole), shielded: matchState[myRole].engine.shieldedThisRound };
+  const oppEngine = { hp: displayEngineHp(oppRole), maxHp: matchState[oppRole].engine.maxHp, pulse: pulsingEngineSides.has(oppRole), shielded: matchState[oppRole].engine.shieldedThisRound };
   renderTrain(myTrainEl, myCars, myValidIds, flagPreviews.mine, myEngine);
   renderTrain(oppTrainEl, oppCars, oppValidIds, flagPreviews.opp, oppEngine);
 
@@ -426,7 +426,7 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
     const previewFlag = flagPreview && flagPreview.target === car.id ? flagPreview.flag : null;
     const flagKinds = [];
     if (car.overcharged || previewFlag === 'overcharge') flagKinds.push('overcharge');
-    if (car.protected || previewFlag === 'shield') flagKinds.push('shield');
+    if (car.protected || car.shieldedThisRound || previewFlag === 'shield') flagKinds.push('shield');
     if (car.disabledThisRound || previewFlag === 'disabled') flagKinds.push('disabled');
     if (flagKinds.length) {
       const flagRow = document.createElement('div');
@@ -462,6 +462,17 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
   const engineJunk = engineInfo.hp <= 0;
   engine.className = `car-box engine${engineInfo.pulse ? ' pulse' : ''}${engineJunk ? ' junk' : ''}`;
   engine.innerHTML = `<strong>ENGINE</strong>`;
+  if (engineInfo.shielded) {
+    const flagRow = document.createElement('div');
+    flagRow.className = 'car-flags';
+    const flag = document.createElement('div');
+    flag.className = 'car-flag shield';
+    const icon = document.createElement('div');
+    icon.className = 'shield-icon';
+    flag.appendChild(icon);
+    flagRow.appendChild(flag);
+    engine.appendChild(flagRow);
+  }
   engine.appendChild(hpDots(engineInfo.hp, engineInfo.maxHp));
   el.appendChild(engine);
 }
