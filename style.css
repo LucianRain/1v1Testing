@@ -353,8 +353,9 @@ input:focus {
   width: max-content;
   /* The 4 wheels are drawn at fixed offsets from each edge (see the ::before
      /::after rules below) - below this width the two inner wheels would
-     start overlapping each other. */
-  min-width: 90px;
+     start overlapping each other. Kept well above the threshold since a
+     short name/stat (e.g. Gunner's "1 shot/rd") sits right at the edge of it. */
+  min-width: 140px;
   padding: 8px 12px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.25);
