@@ -180,6 +180,20 @@ function insertCar(cars, car, index) {
   cars.splice(i, 0, car);
 }
 
+// Moves an already-coupled car to a new position in its own train - a free
+// action a player can do on their own turn to change trigger order, not
+// tied to playing a card. Purely a reordering of state[side].cars: no RNG,
+// no hidden information, so both peers can apply the exact same call (by
+// car id) and stay in lockstep without needing to run it through
+// resolveSetup/resolveTrigger. No-ops if the car isn't found.
+export function reorderCar(state, side, carId, insertIndex) {
+  const cars = state[side].cars;
+  const fromIndex = cars.findIndex((c) => c.id === carId);
+  if (fromIndex === -1) return;
+  const [car] = cars.splice(fromIndex, 1);
+  insertCar(cars, car, insertIndex);
+}
+
 // A car that's used up whatever made it useful but is still coupled: a
 // Wrecking Car that's already fired. Distinct from being junked (0 HP) - a
 // spent car can still be perfectly healthy, it's just done its job.

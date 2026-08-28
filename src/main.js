@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, UPGRADABLE_TYPES, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner } from './game.js';
+import { CARDS, UPGRADABLE_TYPES, createDeck, draw, redrawHand, ensurePlayable, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner, reorderCar } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -98,6 +98,7 @@ let oppPendingCar = null; // same, for the opponent's just-revealed play
 let oppPendingInsertIndex = null;
 let dragState = null; // in-progress drag of a train-car hand card
 let targetDragState = null; // in-progress arc-targeting drag (Sabotage/Overcharge/Reinforce, or aiming a placed Wrecking Car)
+let reorderDragState = null; // { carId, ghost, indicator, insertIndex, overTrain, sourceBoxEl } - in-progress drag of an already-coupled car on my own train, reordering it
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
 let stagedPlay = null; // { cardId, handIdx, target, insertIndex, refreshTarget } - what End Turn submits; null = pass. The card already left myHand (see stagePlay); handIdx is only kept around so renderHand can hold that slot's layout in place.
 let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
@@ -178,6 +179,11 @@ net.addEventListener('data', (e) => {
     startMatch(msg.seed);
   } else if (msg.t === 'play') {
     handleOppPlayKnown(msg.card, msg.target, msg.insertIndex, msg.refreshTarget);
+  } else if (msg.t === 'reorder') {
+    // The opponent freely reordered their own train - mirror it onto my
+    // copy of their side so both peers stay in the same trigger order.
+    reorderCar(matchState, oppRole, msg.carId, msg.insertIndex);
+    renderTrains();
   }
 });
 
@@ -292,8 +298,8 @@ function renderTrains(hpOverride) {
   const oppEngineShielded = matchState[oppRole].engine.shieldedThisRound || (shieldRevealOverride && shieldRevealOverride.engineSides.has(oppRole));
   const myEngine = { hp: displayEngineHp(myRole), maxHp: matchState[myRole].engine.maxHp, pulse: pulsingEngineSides.has(myRole), shielded: myEngineShielded };
   const oppEngine = { hp: displayEngineHp(oppRole), maxHp: matchState[oppRole].engine.maxHp, pulse: pulsingEngineSides.has(oppRole), shielded: oppEngineShielded };
-  renderTrain(myTrainEl, myCars, myValidIds, flagPreviews.mine, myEngine);
-  renderTrain(oppTrainEl, oppCars, oppValidIds, flagPreviews.opp, oppEngine);
+  renderTrain(myTrainEl, myCars, myValidIds, flagPreviews.mine, myEngine, true);
+  renderTrain(oppTrainEl, oppCars, oppValidIds, flagPreviews.opp, oppEngine, false);
 
   const myTotal = hpOverride ? hpOverride.my : computeHp(matchState, myRole).hp;
   const oppTotal = hpOverride ? hpOverride.opp : computeHp(matchState, oppRole).hp;
@@ -464,8 +470,23 @@ function hpDots(hp, maxHp) {
   return wrap;
 }
 
-function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
+function renderTrain(el, cars, validIds, flagPreview, engineInfo, isMine) {
   el.innerHTML = '';
+
+  // Reordering an already-coupled car is a free action on your own turn -
+  // not tied to playing a card - so it's only offered on my own train, and
+  // only when nothing else is already claiming interaction (a hand-card
+  // drag, targeting, claw aim, a played/staged card, or the round resolving).
+  const canReorder =
+    isMine &&
+    !resolving &&
+    !gameOver &&
+    !myPlay &&
+    !pendingPlay &&
+    !awaitingAim &&
+    !dragState &&
+    !targetDragState &&
+    !stagedPlay;
 
   // Cars trail behind the engine, which leads on the right - the train faces right.
   cars.forEach((car) => {
@@ -546,6 +567,9 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo) {
     if (awaitingPlacementAim) {
       box.classList.add('needs-aim');
       box.addEventListener('pointerdown', (e) => startClawAim(e, box));
+    } else if (canReorder && car.id != null && !(validIds && validIds.has(car.id))) {
+      box.classList.add('reorderable');
+      box.addEventListener('pointerdown', (e) => startCarReorderDrag(e, car, box));
     }
     el.appendChild(box);
   });
@@ -800,6 +824,102 @@ function onCardDragEnd(e) {
   }
 }
 
+// Dragging an already-coupled car to a new spot on your own train - a free
+// action on your turn, independent of playing a card. Same gap-snapping
+// insert indicator as dragging a card in from hand (see updateDropTarget),
+// but reordering state[myRole].cars directly rather than coupling anything
+// new. Applied instantly and sent to the opponent so both peers' copies of
+// my train stay in the same order (see the 'reorder' network message) -
+// pure reordering by id needs no RNG or hidden info, so there's nothing to
+// run through resolveSetup/resolveTrigger for this.
+function startCarReorderDrag(e, car, boxEl) {
+  if (reorderDragState) return;
+  e.preventDefault();
+
+  const ghost = document.createElement('div');
+  ghost.className = 'card-ghost';
+  ghost.innerHTML = boxEl.innerHTML;
+  document.body.appendChild(ghost);
+
+  const indicator = document.createElement('div');
+  indicator.className = 'insert-indicator';
+  document.body.appendChild(indicator);
+
+  boxEl.classList.add('reorder-lifted');
+  reorderDragState = { carId: car.id, ghost, indicator, insertIndex: null, overTrain: false, sourceBoxEl: boxEl };
+  moveReorderGhost(e.clientX, e.clientY);
+  updateReorderDropTarget(e.clientX, e.clientY);
+
+  boxEl.setPointerCapture(e.pointerId);
+  boxEl.addEventListener('pointermove', onCarReorderDragMove);
+  boxEl.addEventListener('pointerup', onCarReorderDragEnd);
+  boxEl.addEventListener('pointercancel', onCarReorderDragEnd);
+}
+
+function moveReorderGhost(x, y) {
+  reorderDragState.ghost.style.left = `${x}px`;
+  reorderDragState.ghost.style.top = `${y}px`;
+}
+
+function onCarReorderDragMove(e) {
+  if (!reorderDragState) return;
+  moveReorderGhost(e.clientX, e.clientY);
+  updateReorderDropTarget(e.clientX, e.clientY);
+}
+
+function updateReorderDropTarget(x, y) {
+  const trackRect = myTrackEl.getBoundingClientRect();
+  const overTrain = x >= trackRect.left && x <= trackRect.right && y >= trackRect.top && y <= trackRect.bottom;
+  reorderDragState.overTrain = overTrain;
+  if (!overTrain) {
+    reorderDragState.indicator.classList.remove('visible');
+    return;
+  }
+  reorderDragState.indicator.classList.add('visible');
+
+  // Same gap between existing cars, or right before the engine, as a
+  // hand-card drop - except the car being dragged is excluded from its own
+  // gap calculation (it's still sitting in the DOM at its old spot).
+  const carBoxes = Array.from(myTrainEl.querySelectorAll('.car-box:not(.engine)')).filter(
+    (el) => Number(el.dataset.carId) !== reorderDragState.carId
+  );
+  let index = carBoxes.length;
+  let indicatorX = null;
+  for (let i = 0; i < carBoxes.length; i++) {
+    const rect = carBoxes[i].getBoundingClientRect();
+    if (x < rect.left + rect.width / 2) {
+      index = i;
+      indicatorX = rect.left;
+      break;
+    }
+  }
+  if (indicatorX === null) {
+    const engine = myTrainEl.querySelector('.car-box.engine');
+    indicatorX = engine ? engine.getBoundingClientRect().left : trackRect.right;
+  }
+  reorderDragState.insertIndex = index;
+  reorderDragState.indicator.style.left = `${indicatorX}px`;
+  reorderDragState.indicator.style.top = `${trackRect.top}px`;
+  reorderDragState.indicator.style.height = `${trackRect.height}px`;
+}
+
+function onCarReorderDragEnd(e) {
+  if (!reorderDragState) return;
+  const { carId, overTrain, insertIndex, ghost, indicator, sourceBoxEl } = reorderDragState;
+  ghost.remove();
+  indicator.remove();
+  sourceBoxEl.classList.remove('reorder-lifted');
+  sourceBoxEl.removeEventListener('pointermove', onCarReorderDragMove);
+  sourceBoxEl.removeEventListener('pointerup', onCarReorderDragEnd);
+  sourceBoxEl.removeEventListener('pointercancel', onCarReorderDragEnd);
+  reorderDragState = null;
+  if (!overTrain) return; // dropped off the train, cancel - stays where it was
+
+  reorderCar(matchState, myRole, carId, insertIndex);
+  if (!vsBot) net.send({ t: 'reorder', carId, insertIndex });
+  renderTrains();
+}
+
 // Shared arc-targeting reticle: drag from a source element (a hand card for
 // Sabotage, or a just-placed Wrecking Car on the train for aiming it) and an
 // arcing line + reticle follow the pointer. Releasing over a highlighted
@@ -950,6 +1070,15 @@ function abortInProgressInteractions() {
     targetDragState.sourceEl.removeEventListener('pointerup', onTargetDragEnd);
     targetDragState.sourceEl.removeEventListener('pointercancel', onTargetDragEnd);
     targetDragState = null;
+  }
+  if (reorderDragState) {
+    reorderDragState.ghost.remove();
+    reorderDragState.indicator.remove();
+    reorderDragState.sourceBoxEl.classList.remove('reorder-lifted');
+    reorderDragState.sourceBoxEl.removeEventListener('pointermove', onCarReorderDragMove);
+    reorderDragState.sourceBoxEl.removeEventListener('pointerup', onCarReorderDragEnd);
+    reorderDragState.sourceBoxEl.removeEventListener('pointercancel', onCarReorderDragEnd);
+    reorderDragState = null;
   }
   pendingPlay = null;
   if (awaitingAim) {
