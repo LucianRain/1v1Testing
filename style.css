@@ -465,24 +465,6 @@ input:focus {
 .car-box strong { font-size: 11px; letter-spacing: 0.04em; }
 .car-box span { opacity: 0.75; }
 
-.car-box.engine {
-  position: relative;
-  background: #313135;
-  font-weight: 700;
-  margin-right: 10px;
-}
-
-.car-box.engine::after {
-  content: '';
-  position: absolute;
-  right: -10px;
-  top: 50%;
-  transform: translateY(-50%);
-  border-top: 10px solid transparent;
-  border-bottom: 10px solid transparent;
-  border-left: 10px solid #313135;
-}
-
 .car-box.wagon {
   border-color: rgba(217, 105, 90, 0.55);
   background: #2f1b1d;

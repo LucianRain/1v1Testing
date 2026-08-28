@@ -13,14 +13,14 @@ export const SUDDEN_DEATH_START_ROUND = 9;
 export const UPGRADABLE_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
 
 export const CARDS = {
-  wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, fires for 1 dmg every round (drag onto your own for another shot)' },
-  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, 1 dmg every round in one shot, targets the Wrecking Car first if one is alive' },
-  claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, then destroys one of their coupled cars' },
-  sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
-  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, each round shields one random friendly car (or the engine) - blocks the next hit on it, then breaks' },
-  repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, heals 1 HP every round' },
-  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protect one of your coupled cars for one round - blocks the next hit on it, then breaks' },
-  refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
+  wagon: { name: 'Gunner', target: null, persistent: true, weapon: true, maxHp: 1, desc: '1 HP. 1 dmg/round.' },
+  sniper: { name: 'Sniper', target: null, persistent: true, weapon: true, maxHp: 1, desc: '1 HP. 1 dmg/round. Hits the Wrecker first.' },
+  claw: { name: 'Wrecker', target: 'enemy_car', persistent: true, maxHp: 1, desc: '1 HP. Destroys an enemy car.' },
+  sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: 'Disables an enemy car for a round.' },
+  armor: { name: 'Shield', target: null, persistent: true, maxHp: 2, desc: '2 HP. Shields a random car each round.' },
+  repair: { name: 'Repair', target: null, persistent: true, maxHp: 1, desc: '1 HP. Heals 1 HP/round.' },
+  reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protects a car for a round.' },
+  refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heals or revives a car.' },
 };
 
 const CARD_IDS = Object.keys(CARDS);

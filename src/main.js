@@ -576,7 +576,7 @@ function updateHint() {
   } else if (targetDragState) {
     text = 'Drag to a target, then release to aim.';
   } else if (awaitingAim) {
-    text = 'Drag from your Wrecking Car to aim it at an enemy car.';
+    text = 'Drag from your Wrecker to aim at an enemy.';
   } else if (pendingPlay) {
     text = '';
   } else if (myPlay) {
@@ -613,9 +613,7 @@ function renderHand() {
     const disabled = locked || (needsTarget && targets.length === 0);
     btn.disabled = disabled;
     if (stagedPlay && stagedPlay.handIdx === idx) btn.classList.add('staged');
-    const desc = UPGRADABLE_TYPES.includes(cardId)
-      ? `${card.desc} - drag onto your own to upgrade it (or revive it, if it's junked), or drop elsewhere for a separate one`
-      : card.desc;
+    const desc = UPGRADABLE_TYPES.includes(cardId) ? `${card.desc} Drag onto itself to upgrade.` : card.desc;
     btn.innerHTML = `<strong>${card.name}</strong><span>${desc}</span>`;
     if (card.maxHp) btn.appendChild(hpDots(card.maxHp, card.maxHp));
     if (card.persistent) {
