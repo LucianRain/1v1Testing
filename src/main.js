@@ -1428,3 +1428,10 @@ btnModeAuto.addEventListener('click', () => setMatchMode('autoMode'));
 btnModeInvite.addEventListener('click', () => setMatchMode('inviteMode'));
 btnAutoMatch.addEventListener('click', findAutoMatch);
 btnAutoCancel.addEventListener('click', resetConnectionUI);
+
+// local.html has no Practice/vs-Bot option and skips straight to matchmaking
+// - nothing to choose, so there's no reason to make the player click Join
+// Game themselves.
+if (location.pathname.endsWith('local.html')) {
+  findAutoMatch();
+}
