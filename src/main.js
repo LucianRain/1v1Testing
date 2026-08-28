@@ -150,6 +150,7 @@ function pendingCarFor(cardId, target) {
   if (cardId === 'sniper') return { type: 'sniper', dmgPerRound: 1, pending: true, hp: CARDS.sniper.maxHp, maxHp: CARDS.sniper.maxHp };
   if (cardId === 'armor') return { type: 'armor', shieldRolls: 1, pending: true, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
   if (cardId === 'repair') return { type: 'repair', healPerRound: 1, pending: true, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
+  if (cardId === 'medic') return { type: 'medic', pending: true, hp: CARDS.medic.maxHp, maxHp: CARDS.medic.maxHp };
   if (cardId === 'claw') return { type: 'claw', pending: true, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
   return null;
 }
@@ -491,6 +492,7 @@ function carStatText(car, { junk = false, awaitingPlacementAim = false, spent = 
   if (car.type === 'sniper') return `${car.dmgPerRound}/rd · pierces`;
   if (car.type === 'armor') return car.shieldRolls > 1 ? `${car.shieldRolls}x shield/rd` : '1x shield/rd';
   if (car.type === 'claw') return awaitingPlacementAim ? 'aim me' : spent ? 'spent' : 'armed';
+  if (car.type === 'medic') return 'revives 1/rd';
   return `+${car.healPerRound}/rd`;
 }
 

@@ -485,6 +485,11 @@ input:focus {
   background: #182c24;
 }
 
+.car-box.medic {
+  border-color: rgba(230, 130, 170, 0.55);
+  background: #33212a;
+}
+
 .car-box.claw {
   border-color: rgba(190, 130, 230, 0.55);
   background: #2a2036;

@@ -9,7 +9,12 @@ export const SUDDEN_DEATH_START_ROUND = 9;
 // upgrade it, or drop it anywhere else in the train to couple a separate
 // duplicate instead. There's no dedicated Upgrade card anymore - this list
 // is what resolveSetup checks a play's target against, and what the UI
-// offers the drag-onto-self interaction for.
+// offers the drag-onto-self interaction for. Wrecking Car and Medic are
+// deliberately left out: Wrecker has nothing to scale, and Medic's revive
+// is capped at exactly one attempt per round on purpose - letting it stack
+// would mean one card permanently snowballing every turn it's re-played,
+// which is worse than just letting extra copies couple as separate,
+// individually-killable cars instead.
 export const UPGRADABLE_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
 
 export const CARDS = {
@@ -19,6 +24,7 @@ export const CARDS = {
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: 'Disables an enemy car for a round.' },
   armor: { name: 'Shield', target: null, persistent: true, maxHp: 2, desc: '2 HP. Shields a random car each round.' },
   repair: { name: 'Repair', target: null, persistent: true, maxHp: 1, desc: '1 HP. Heals 1 HP/round.' },
+  medic: { name: 'Medic', target: null, persistent: true, maxHp: 1, desc: '1 HP. Revives a junked car each round.' },
   reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: 'Protects a car for a round.' },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heals or revives a car.' },
 };
@@ -348,6 +354,9 @@ export function resolveSetup(state, plays) {
     } else if (play.card === 'repair') {
       car = { id: ++state.carCounter, type: 'repair', healPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.repair.maxHp, maxHp: CARDS.repair.maxHp };
       log.push(`${s} couples a Repair Car`);
+    } else if (play.card === 'medic') {
+      car = { id: ++state.carCounter, type: 'medic', protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.medic.maxHp, maxHp: CARDS.medic.maxHp };
+      log.push(`${s} couples a Medic`);
     } else if (play.card === 'claw') {
       car = { id: ++state.carCounter, type: 'claw', fired: false, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.claw.maxHp, maxHp: CARDS.claw.maxHp };
       log.push(`${s} couples a Wrecking Car`);
@@ -442,6 +451,13 @@ function healablePool(state, side) {
   if (engine.hp > 0 && engine.hp < engine.maxHp) pool.push({ kind: 'engine' });
   for (const car of state[side].cars) if (car.hp > 0 && car.hp < car.maxHp) pool.push({ kind: 'car', car });
   return pool;
+}
+
+// Medic's revival pool - junked (0 HP) cars only, never a merely-damaged
+// one (that's Repair's job) and never the engine (by the time it's at 0 HP
+// the match is already over, per checkWinner).
+function medicPool(state, side) {
+  return state[side].cars.filter((c) => c.hp <= 0).map((car) => ({ kind: 'car', car }));
 }
 
 function pickRandom(pool, rng) {
@@ -579,6 +595,27 @@ export function resolveTrigger(state, plays) {
           if (picked.kind === 'engine') state[side].engine.shieldedThisRound = true;
           else picked.car.shieldedThisRound = true;
         }
+      }
+    } else if (car.type === 'medic') {
+      // Not upgradable (see UPGRADABLE_TYPES) - always exactly one revival
+      // attempt per round, no matter how many Medics end up coupled.
+      const picked = pickRandom(medicPool(state, side), state.battleRng);
+      if (picked) {
+        const target = picked.car;
+        target.hp = Math.max(1, Math.ceil(target.maxHp / 2));
+        log.push(`${side}'s medic revives their junked ${target.type}`);
+        events.push({
+          kind: 'revive',
+          attackerSide: side,
+          attackerCarId: car.id,
+          targetSide: side,
+          amount: target.hp,
+          hitKind: 'car',
+          hitCarId: target.id,
+          junked: false,
+          targetHpAfter: target.hp,
+          hpAfter: computeHp(state, side).hp,
+        });
       }
     }
   }

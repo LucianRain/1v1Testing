@@ -11,6 +11,7 @@ function carValue(car) {
   else if (car.type === 'sniper') base = car.dmgPerRound * 3.5; // unblockable - a bit more worth removing than a wagon
   else if (car.type === 'armor') base = car.shieldRolls * 2;
   else if (car.type === 'repair') base = car.healPerRound * 2.5;
+  else if (car.type === 'medic') base = 2.5; // flat - it doesn't scale, there's no shieldRolls-style stat to read
   // A car close to dying on its own is worth less to spend a card removing.
   return base * (car.hp / car.maxHp);
 }
@@ -56,6 +57,12 @@ function scorePlay(state, side, cardId) {
     case 'armor': {
       const incoming = state[opp].cars.filter((c) => c.type === 'wagon').reduce((a, c) => a + c.dmgPerRound, 0);
       return { score: 2 + incoming * 1.5, target: existingOfType(state, side, 'armor') };
+    }
+    case 'medic': {
+      // Not upgradable - always couples a fresh one, never a target. Worth
+      // much more with an actual junked car to bring back this round.
+      const hasJunked = state[side].cars.some((c) => c.hp <= 0);
+      return { score: hasJunked ? 5 : 1.5, target: null };
     }
     case 'claw': {
       const target = bestTarget(state[opp].cars, targets);
