@@ -14,10 +14,10 @@ export const UPGRADABLE_TYPES = ['wagon', 'sniper', 'armor', 'repair'];
 
 export const CARDS = {
   wagon: { name: 'Artillery Wagon', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, fires for 1 dmg every round (drag onto your own for another shot)' },
-  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, 1 dmg every round in one shot, ignores Armor Car, targets the Wrecking Car first if one is alive' },
+  sniper: { name: 'Sniper Car', target: null, persistent: true, weapon: true, maxHp: 1, desc: 'Couples on: 1 HP, 1 dmg every round in one shot, targets the Wrecking Car first if one is alive' },
   claw: { name: 'Wrecking Car', target: 'enemy_car', persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, then destroys one of their coupled cars' },
   sabotage: { name: 'Sabotage', target: 'enemy_car', persistent: false, desc: "Disable one of their coupled cars this round" },
-  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, blocks your next hit(s); each round, shields one random friendly car until the trigger phase ends' },
+  armor: { name: 'Armor Car', target: null, persistent: true, maxHp: 2, desc: 'Couples on: 2 HP, each round shields one random friendly car (or the engine) until the trigger phase ends' },
   repair: { name: 'Repair Car', target: null, persistent: true, maxHp: 1, desc: 'Couples on: 1 HP, heals 1 HP every round' },
   reinforce: { name: 'Shield', target: 'own_car', persistent: false, desc: "Protect one of your coupled cars for one round - can't be targeted or hit" },
   refresh: { name: 'Refresh', target: 'own_car', persistent: false, desc: 'Heal a damaged car to full, or revive a destroyed one at half HP' },
@@ -180,12 +180,10 @@ function insertCar(cars, car, index) {
   cars.splice(i, 0, car);
 }
 
-// A car that's used up whatever made it useful but is still coupled: an
-// Armor Car with no charges left, or a Wrecking Car that's already fired.
-// Distinct from being junked (0 HP) - a spent car can still be perfectly
-// healthy, it's just done its job.
+// A car that's used up whatever made it useful but is still coupled: a
+// Wrecking Car that's already fired. Distinct from being junked (0 HP) - a
+// spent car can still be perfectly healthy, it's just done its job.
 export function isSpent(car) {
-  if (car.type === 'armor') return car.blockCharges <= 0;
   if (car.type === 'claw') return car.fired;
   return false;
 }
@@ -208,11 +206,8 @@ export function validTargets(state, side, cardId) {
   if (card.target === 'own_car') {
     if (cardId === 'reinforce') return state[side].cars.filter((c) => !c.protected && c.hp > 0).map((c) => c.id);
     if (cardId === 'refresh') {
-      // Anything not at full HP (damaged or junked), or a fully-healthy
-      // Armor Car that's just out of charges.
-      return state[side].cars
-        .filter((c) => c.hp < c.maxHp || (c.type === 'armor' && c.blockCharges <= 0))
-        .map((c) => c.id);
+      // Anything not at full HP (damaged or junked).
+      return state[side].cars.filter((c) => c.hp < c.maxHp).map((c) => c.id);
     }
     return state[side].cars.map((c) => c.id);
   }
@@ -276,15 +271,10 @@ export function resolveSetup(state, plays) {
           // Destroyed (junked): a partial revival - it doesn't undo whatever
           // already happened to it, a fired Wrecking Car stays fired/spent.
           car.hp = Math.max(1, Math.ceil(car.maxHp / 2));
-          if (car.type === 'armor') car.blockCharges = 1;
           log.push(`${s} revives their junked ${car.type}`);
         } else if (car.hp < car.maxHp) {
           car.hp = car.maxHp;
-          if (car.type === 'armor') car.blockCharges = 1;
           log.push(`${s} refreshes their ${car.type} to full health`);
-        } else if (car.type === 'armor' && car.blockCharges <= 0) {
-          car.blockCharges = 1;
-          log.push(`${s} refreshes their armor car`);
         }
       }
     }
@@ -315,20 +305,20 @@ export function resolveSetup(state, plays) {
       existing.upgradeLevel = 1;
       if (existing.type === 'wagon') existing.dmgPerRound = 2;
       if (existing.type === 'sniper') existing.dmgPerRound = 2;
-      if (existing.type === 'armor') existing.blockCharges = 2;
+      if (existing.type === 'armor') existing.shieldRolls = 2;
       if (existing.type === 'repair') existing.healPerRound = 2;
       existing.overcharged = true;
       log.push(`${s}'s new ${play.card} revives their junked one as a level-1 upgrade`);
     } else if (existing) {
       if (existing.type === 'wagon') existing.dmgPerRound += 1;
       if (existing.type === 'sniper') existing.dmgPerRound += 1;
-      if (existing.type === 'armor') existing.blockCharges += 1;
+      if (existing.type === 'armor') existing.shieldRolls += 1;
       if (existing.type === 'repair') existing.healPerRound += 1;
       existing.overcharged = true;
       existing.upgradeLevel = (existing.upgradeLevel || 0) + 1;
       log.push(`${s}'s new ${play.card} merges into their existing one, upgrading it`);
     } else if (play.card === 'armor') {
-      car = { id: ++state.carCounter, type: 'armor', blockCharges: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
+      car = { id: ++state.carCounter, type: 'armor', shieldRolls: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.armor.maxHp, maxHp: CARDS.armor.maxHp };
       log.push(`${s} couples an Armor Car`);
     } else if (play.card === 'wagon') {
       car = { id: ++state.carCounter, type: 'wagon', dmgPerRound: 1, protected: false, disabledThisRound: false, justCoupled: true, shieldedThisRound: false, upgradeLevel: 0, hp: CARDS.wagon.maxHp, maxHp: CARDS.wagon.maxHp };
@@ -440,66 +430,51 @@ function pickRandom(pool, rng) {
   return pool[Math.floor(rng() * pool.length)];
 }
 
-// A single hit against a target side: an available armor car absorbs it
-// entirely (one charge, falls off once spent) - otherwise it lands on
-// whichever car (or the engine) the shared battle RNG randomly picks among
-// what's still standing, Shielded or not. If what it lands on happens to be
-// Shielded (the Shield card's protected, or an Armor Car's passive
-// shieldedThisRound pick), the shot is simply wasted - no damage to anyone,
-// giving Shield a real chance to fully negate a hit rather than just always
-// pushing the same total damage onto someone else. Records a structured
-// event so the UI can replay the sequence hit by hit - e.g. firing a
-// projectile at the actual car it hit, and only revealing the result once
-// it "lands".
-function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId, ignoresArmor = false, poolBuilder = hittablePool) {
+// A single hit against a target side: it lands on whichever car (or the
+// engine) the shared battle RNG randomly picks among what's still standing,
+// Shielded or not - an Armor Car no longer absorbs hits directly, it only
+// grants its passive random Shield (see the 'armor' case in resolveTrigger,
+// below). If what it lands on happens to be Shielded (the Shield card's
+// protected, or an Armor Car's passive shieldedThisRound pick), the shot is
+// simply wasted - no damage to anyone, giving Shield a real chance to fully
+// negate a hit rather than just always pushing the same total damage onto
+// someone else. Records a structured event so the UI can replay the
+// sequence hit by hit - e.g. firing a projectile at the actual car it hit,
+// and only revealing the result once it "lands".
+function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, attackerSide, attackerCarId, poolBuilder = hittablePool) {
   if (amount <= 0) return;
 
-  const armorCar = ignoresArmor
-    ? null
-    : state[targetSide].cars.find((c) => c.type === 'armor' && c.blockCharges > 0 && c.hp > 0 && !c.disabledThisRound);
-
-  let blocked = false;
-  let blockedByCarId = null;
-  let hitKind = null; // 'engine' | 'car' | null (blocked, or nothing left standing)
+  let hitKind = null; // 'engine' | 'car' | null (nothing left standing)
   let hitCarId = null;
   let junked = false;
   let shielded = false; // hit landed on a Shielded target - no damage dealt
   let targetHpAfter = null; // the specific engine/car's own HP after this hit
 
-  if (armorCar) {
-    armorCar.blockCharges--;
-    blocked = true;
-    blockedByCarId = armorCar.id;
-    log.push(`${targetSide}'s armor car blocks ${sourceLabel}`);
-    // Spent, not destroyed - it stays coupled, just inert until an
-    // Overcharge (or Refresh) gives it something to block with again.
-  } else {
-    const picked = pickRandom(poolBuilder(state, targetSide), state.battleRng);
-    if (picked && picked.kind === 'engine') {
-      hitKind = 'engine';
-      shielded = state[targetSide].engine.shieldedThisRound;
-      if (shielded) {
-        targetHpAfter = state[targetSide].engine.hp;
-        log.push(`${targetSide}'s shielded engine takes no damage from ${sourceLabel}`);
-      } else {
-        state[targetSide].engine.hp = Math.max(0, state[targetSide].engine.hp - amount);
-        targetHpAfter = state[targetSide].engine.hp;
-        log.push(`${targetSide}'s engine takes ${amount} damage from ${sourceLabel}`);
-      }
-    } else if (picked) {
-      const car = picked.car;
-      hitKind = 'car';
-      hitCarId = car.id;
-      shielded = car.protected || car.shieldedThisRound;
-      if (shielded) {
-        targetHpAfter = car.hp;
-        log.push(`${targetSide}'s shielded ${car.type} takes no damage from ${sourceLabel}`);
-      } else {
-        car.hp = Math.max(0, car.hp - amount);
-        junked = car.hp <= 0;
-        targetHpAfter = car.hp;
-        log.push(`${targetSide}'s ${car.type} takes ${amount} damage from ${sourceLabel}${junked ? ' and is junked' : ''}`);
-      }
+  const picked = pickRandom(poolBuilder(state, targetSide), state.battleRng);
+  if (picked && picked.kind === 'engine') {
+    hitKind = 'engine';
+    shielded = state[targetSide].engine.shieldedThisRound;
+    if (shielded) {
+      targetHpAfter = state[targetSide].engine.hp;
+      log.push(`${targetSide}'s shielded engine takes no damage from ${sourceLabel}`);
+    } else {
+      state[targetSide].engine.hp = Math.max(0, state[targetSide].engine.hp - amount);
+      targetHpAfter = state[targetSide].engine.hp;
+      log.push(`${targetSide}'s engine takes ${amount} damage from ${sourceLabel}`);
+    }
+  } else if (picked) {
+    const car = picked.car;
+    hitKind = 'car';
+    hitCarId = car.id;
+    shielded = car.protected || car.shieldedThisRound;
+    if (shielded) {
+      targetHpAfter = car.hp;
+      log.push(`${targetSide}'s shielded ${car.type} takes no damage from ${sourceLabel}`);
+    } else {
+      car.hp = Math.max(0, car.hp - amount);
+      junked = car.hp <= 0;
+      targetHpAfter = car.hp;
+      log.push(`${targetSide}'s ${car.type} takes ${amount} damage from ${sourceLabel}${junked ? ' and is junked' : ''}`);
     }
   }
 
@@ -509,8 +484,6 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
     attackerCarId: attackerCarId ?? null,
     targetSide,
     amount,
-    blocked,
-    blockedByCarId,
     hitKind,
     hitCarId,
     junked,
@@ -548,8 +521,6 @@ export function resolveTrigger(state, plays) {
             attackerCarId: car.id,
             targetSide: side,
             amount: healed,
-            blocked: false,
-            blockedByCarId: null,
             hitKind: picked.kind,
             hitCarId: picked.kind === 'car' ? picked.car.id : null,
             targetHpAfter: healTarget.hp,
@@ -568,16 +539,21 @@ export function resolveTrigger(state, plays) {
     } else if (car.type === 'sniper') {
       // Unlike the wagon, a sniper always fires its whole dmgPerRound as
       // one shot - and it always goes for the Wrecking Car first.
-      applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, true, hittablePoolPreferClaw);
+      applyHit(state, target, car.dmgPerRound, log, `${side}'s sniper car`, events, 'sniper', side, car.id, hittablePoolPreferClaw);
     } else if (car.type === 'armor') {
       // Armor's passive shield is granted right when its own turn in the
       // trigger order comes up, not upfront before the round starts - a car
       // that fires earlier in the order (closer to the engine) is exposed to
-      // hits before this armor car has had a chance to shield anyone.
-      const picked = pickRandom(shieldablePool(state, side), state.battleRng);
-      if (picked) {
-        if (picked.kind === 'engine') state[side].engine.shieldedThisRound = true;
-        else picked.car.shieldedThisRound = true;
+      // hits before this armor car has had a chance to shield anyone. It no
+      // longer blocks a hit outright - each of its shieldRolls (base 1, +1
+      // per Upgrade) independently picks a random friendly car or the engine
+      // to shield for the rest of this trigger phase.
+      for (let i = 0; i < car.shieldRolls; i++) {
+        const picked = pickRandom(shieldablePool(state, side), state.battleRng);
+        if (picked) {
+          if (picked.kind === 'engine') state[side].engine.shieldedThisRound = true;
+          else picked.car.shieldedThisRound = true;
+        }
       }
     }
   }

@@ -9,7 +9,7 @@ function carValue(car) {
   let base = 0;
   if (car.type === 'wagon') base = car.dmgPerRound * 3;
   else if (car.type === 'sniper') base = car.dmgPerRound * 3.5; // unblockable - a bit more worth removing than a wagon
-  else if (car.type === 'armor') base = car.blockCharges * 2;
+  else if (car.type === 'armor') base = car.shieldRolls * 2;
   else if (car.type === 'repair') base = car.healPerRound * 2.5;
   // A car close to dying on its own is worth less to spend a card removing.
   return base * (car.hp / car.maxHp);
@@ -46,11 +46,8 @@ function scorePlay(state, side, cardId) {
   switch (cardId) {
     case 'wagon':
       return { score: 5, target: existingOfType(state, side, 'wagon') };
-    case 'sniper': {
-      // Worth more specifically when they have active armor to punch through.
-      const armorUp = state[opp].cars.some((c) => c.type === 'armor' && c.blockCharges > 0);
-      return { score: armorUp ? 6 : 4, target: existingOfType(state, side, 'sniper') };
-    }
+    case 'sniper':
+      return { score: 4, target: existingOfType(state, side, 'sniper') };
     case 'repair': {
       const { hp, maxHp } = computeHp(state, side);
       const missing = maxHp - hp;
