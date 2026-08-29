@@ -103,14 +103,17 @@ let targetDragState = null; // in-progress arc-targeting drag (Sabotage, or aimi
 let reorderDragState = null; // { carId, ghost, indicator, insertIndex, overTrain, sourceBoxEl } - in-progress drag of an already-coupled car on my own train, reordering it
 let awaitingAim = null; // { cardId, handIdx, insertIndex } once a Wrecking Car is placed but not yet aimed
 let stagedPlay = null; // { cardId, target, insertIndex } - what End Turn submits; null = pass. The card already left myHand (see stagePlay).
-// The card id a play just removed from myHand - set the instant it's
-// staged, and outlives stagedPlay/myPlay (which both go back to null well
-// before the round actually resolves) all the way through to finishRound,
-// which is what actually draws the replacement. renderHand uses this the
-// whole time to redraw the vacated slot as an invisible same-sized
-// placeholder (always trailing the kept card, on the right) rather than
-// letting the kept card resize/reflow into it.
-let vacatedCardId = null;
+// Whichever card(s) most recently vacated a hand slot, in the order
+// renderHand should fill trailing null slots with placeholders for - set
+// the instant a play is staged (the played card), and extended at End Turn
+// to cover whatever's left too (the kept card from a play, or the whole
+// hand on a pass - nothing carries over to next round any more). Outlives
+// stagedPlay/myPlay (which both go back to null well before the round
+// actually resolves) all the way through to finishRound, which is what
+// actually draws the replacements. renderHand uses this the whole time to
+// redraw each vacated slot as an invisible same-sized placeholder rather
+// than letting anything resize/reflow into it.
+let vacatedCardIds = [];
 let lastRenderedHandSlots = []; // cardId shown in each hand slot on the previous renderHand() call (or null) - used to tell a genuinely new arrival (slides in) from a persisted card that just moved (slides to its new spot - see renderHand's FLIP pass)
 let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-animation though matchState has already removed them
 let myLastTrainWidth = null;
@@ -227,7 +230,7 @@ function startMatch(seed) {
   oppPendingInsertIndex = null;
   awaitingAim = null;
   stagedPlay = null;
-  vacatedCardId = null;
+  vacatedCardIds = [];
   phantomWrecks = [];
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
@@ -657,11 +660,10 @@ function renderHand() {
   // which card to play. End Turn itself stays enabled so it can submit it.
   const handLocked = locked || !!stagedPlay;
 
-  // myHand already keeps whichever card was kept first (stagePlay only
-  // ever splices the played one out) - pad with a trailing placeholder for
-  // the vacated slot, always on the right, regardless of which original
-  // slot was actually played. That's what makes a new arrival always show
-  // up to the right of what you kept, once finishRound draws it.
+  // Whatever's still in myHand (nothing, once End Turn has been pressed -
+  // see endTurn) pads out with a trailing placeholder per vacated slot.
+  // That's what makes a new arrival always show up to the right of
+  // whatever's still mid-staging, once finishRound draws it.
   const slots = myHand.slice(0, HAND_SIZE);
   while (slots.length < HAND_SIZE) slots.push(null);
 
@@ -677,17 +679,21 @@ function renderHand() {
     return rect;
   });
 
+  let nextVacatedIdx = 0;
   slots.forEach((cardId, idx) => {
     if (cardId == null) {
       // Matches whichever card actually vacated this slot, content and all -
       // a hand-car-box sizes itself by its own content (width: max-content),
       // so an empty placeholder would collapse to the wrong width and shift
-      // the remaining real card's position (since #hand centers its row).
-      const vacatedCard = CARDS[vacatedCardId];
+      // any other placeholder's position (since #hand centers its row).
+      // Slots vacate left to right, so the Nth null here pairs with the
+      // Nth entry in vacatedCardIds.
+      const vacatedId = vacatedCardIds[nextVacatedIdx++];
+      const vacatedCard = CARDS[vacatedId];
       const placeholder = document.createElement('div');
       if (vacatedCard.persistent) {
-        const base = pendingCarFor(vacatedCardId, null);
-        placeholder.className = `car-box ${vacatedCardId} hand-car-box placeholder`;
+        const base = pendingCarFor(vacatedId, null);
+        placeholder.className = `car-box ${vacatedId} hand-car-box placeholder`;
         placeholder.innerHTML = `<strong>${vacatedCard.name}</strong><span>${carStatText(base)}</span>`;
         placeholder.appendChild(hpDots(base.maxHp, base.maxHp));
       } else {
@@ -1175,11 +1181,11 @@ function abortInProgressInteractions() {
   awaitingAim = null;
 }
 
-// Passing discards your whole hand and redraws it (see redrawHand) - the
-// old cards slide out to the left before the new ones slide in, so nothing
-// just vanishes/teleports. Playing a card is different: it already left
-// back in stagePlay, and whatever's kept just stays exactly where it is
-// for next round - not discarded, so it never plays this exit animation.
+// Nothing carries over to next round any more - whatever's still a real
+// (non-placeholder) card when End Turn is pressed slides out to the left:
+// the whole hand on a pass, or just the kept card when a play already sent
+// the other one into a placeholder back in stagePlay. Either way the actual
+// redraw is deferred to finishRound, once the round resolves.
 function playHandExitAnimation() {
   const cards = Array.from(handEl.children).filter((el) => !el.classList.contains('placeholder'));
   if (!cards.length) return Promise.resolve();
@@ -1189,10 +1195,11 @@ function playHandExitAnimation() {
 
 // Shared by the End Turn button and the 15s clock running out. Whatever is
 // currently staged is what actually gets submitted; if nothing was staged,
-// this round counts as a pass. Async now (a pass waits for the hand's exit
-// animation first) - endingTurn guards against a second call (a fast
-// double-click, or the clock firing at the same moment) landing during that
-// window, before btnPass has actually disabled.
+// this round counts as a pass. Always waits for the hand's exit animation
+// first now, since a play's own kept card needs to visibly leave too, not
+// just a pass's whole hand - endingTurn guards against a second call (a
+// fast double-click, or the clock firing at the same moment) landing during
+// that window, before btnPass has actually disabled.
 let endingTurn = false;
 async function endTurn() {
   if (endingTurn) return;
@@ -1204,20 +1211,26 @@ async function endTurn() {
   const staged = stagedPlay;
   stagedPlay = null;
 
+  await playHandExitAnimation();
+  endingTurn = false;
+
+  // Whatever just visibly exited above (the kept card from a play, or the
+  // whole hand on a pass) - track its type too, alongside whatever a play
+  // already vacated in stagePlay, so every now-empty slot still shows the
+  // right same-sized placeholder until finishRound draws its replacement.
+  vacatedCardIds = vacatedCardIds.concat(myHand);
+  myHand = [];
+  // The whole hand's about to be freshly redrawn (see finishRound) - make
+  // sure that render treats every card in it as a genuinely new arrival
+  // (slides in), even if the shuffle happens to redraw the same card type
+  // into the same slot.
+  lastRenderedHandSlots = [];
+
   if (staged) {
-    endingTurn = false;
     commitPlay(staged.cardId, staged.target, staged.insertIndex);
     return;
   }
 
-  await playHandExitAnimation();
-  endingTurn = false;
-
-  // The whole hand just visibly exited - make sure the next render treats
-  // every card in the redrawn hand as a fresh arrival (slides in), even if
-  // the shuffle happens to redraw the same card type into the same slot.
-  lastRenderedHandSlots = [];
-  myHand = redrawHand(myDeck, myHand);
   myPlay = { card: null, target: null };
   targetAreaEl.classList.add('hidden');
   revealOppPendingIfReady();
@@ -1270,7 +1283,7 @@ function stagePlay(cardId, handIdx, target, insertIndex) {
   insertIndex = insertIndex ?? null;
   myHand.splice(handIdx, 1);
   stagedPlay = { cardId, target, insertIndex };
-  vacatedCardId = cardId;
+  vacatedCardIds = [cardId];
   myPendingCar = pendingCarFor(cardId, target);
   myPendingInsertIndex = insertIndex;
   targetAreaEl.classList.add('hidden');
@@ -1396,7 +1409,7 @@ async function runResolution() {
   shieldRevealOverride = null;
   inTriggerPhase = false;
   render();
-  finishRound(plays);
+  finishRound();
 }
 
 // Plays every Wrecking Car destroy from this round's setup phase (there can
@@ -1610,12 +1623,13 @@ async function playShieldBreak(side, hitKind, hitCarId) {
   await wait(SHIELD_BREAK_MS);
 }
 
-function finishRound(plays) {
-  // Appended after whatever's kept, never inserted back into its old spot -
-  // a new card always arrives to the right of the kept one (see renderHand).
-  if (plays[myRole].card !== null) myHand.push(draw(myDeck));
-  vacatedCardId = null;
-  if (vsBot && plays[oppRole].card !== null) botHand.push(draw(botDeck));
+function finishRound() {
+  // Nothing carries over between rounds any more - whatever wasn't played
+  // already exited back in endTurn (myHand is empty by now), so the whole
+  // hand redraws fresh here rather than just refilling the played slot.
+  myHand = redrawHand(myDeck, myHand);
+  vacatedCardIds = [];
+  if (vsBot) botHand = redrawHand(botDeck, botHand);
   myHand = ensureNoDuplicateMedic(matchState, myRole, myDeck, myHand);
   myHand = ensurePlayable(matchState, myRole, myDeck, myHand);
   if (vsBot) {
