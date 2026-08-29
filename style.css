@@ -619,13 +619,16 @@ input:focus {
   100% { transform: scale(0.3) rotate(30deg); opacity: 0; }
 }
 
+/* No opacity fade on either one - full-strength the whole way, like a train
+   car rolling in from or out toward the edge of the screen rather than
+   materializing/dissolving in place. */
 @keyframes hand-card-slide-in {
-  from { transform: translateX(60px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from { transform: translateX(100vw); }
+  to { transform: translateX(0); }
 }
 
 @keyframes hand-card-slide-out {
-  to { transform: translateX(-60px); opacity: 0; }
+  to { transform: translateX(-100vw); }
 }
 
 .projectile {
