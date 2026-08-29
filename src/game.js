@@ -29,13 +29,16 @@ export const CARDS = {
 };
 
 const CARD_IDS = Object.keys(CARDS);
-// The Wrecking Car, Sniper Car, and Sabotage are pulled from the draw pool
-// for now (not deleted from CARDS - their mechanics and rendering stay
-// intact in case they come back). The Shield card (reinforce) and Refresh
-// are gone for good, not just undrawable - Armor's own passive shield and
-// Medic's own passive revive both make their one-shot equivalents
-// redundant, so there's no reason to keep either standalone version around.
-const DRAWABLE_CARD_IDS = CARD_IDS.filter((id) => id !== 'claw' && id !== 'sniper' && id !== 'sabotage');
+// The Wrecking Car, Sniper Car, Sabotage, Medic, and Saboteur are pulled
+// from the draw pool for now (not deleted from CARDS - their mechanics and
+// rendering stay intact in case they come back). The Shield card (reinforce)
+// and Refresh are gone for good, not just undrawable - Armor's own passive
+// shield and Medic's own passive revive both make their one-shot
+// equivalents redundant, so there's no reason to keep either standalone
+// version around.
+const DRAWABLE_CARD_IDS = CARD_IDS.filter(
+  (id) => id !== 'claw' && id !== 'sniper' && id !== 'sabotage' && id !== 'medic' && id !== 'saboteur'
+);
 
 // mulberry32 - small deterministic PRNG, good enough for shuffling a fair deck.
 export function makeRng(seed) {
