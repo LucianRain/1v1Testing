@@ -2,7 +2,11 @@
 // peers can run the exact same simulation from the same inputs and stay in sync.
 
 export const ENGINE_MAX_HP = 3;
-export const SUDDEN_DEATH_START_ROUND = 9;
+// Rounds 1..BUILD_ROUNDS: both sides play simultaneously (resolveSetup only -
+// couple cars, upgrade, sabotage) and nothing ever triggers. After that,
+// resolveCombatTurn takes over: one side's whole train fires per round,
+// alternating, and nobody plays anything new - see gamePhase.
+export const BUILD_ROUNDS = 6;
 
 // Wagon, Sniper, Armor, and Repair can each be upgraded in place - the UI
 // lets a player drag one of these onto an existing car of the same type to
@@ -180,6 +184,14 @@ export function createMatchState(battleSeed = 0) {
     client: { engine: { hp: ENGINE_MAX_HP, maxHp: ENGINE_MAX_HP, shieldedThisRound: false }, cars: [] },
     log: [],
   };
+}
+
+// 'build' while both sides are still simultaneously playing cards
+// (resolveSetup), 'combat' once that's over and resolveCombatTurn has taken
+// over instead. state.round is the single source of truth for both the
+// build-round count and, past that, the combat-turn count.
+export function gamePhase(state) {
+  return state.round <= BUILD_ROUNDS ? 'build' : 'combat';
 }
 
 // A side's total remaining HP vs. its total possible HP right now (engine +
@@ -412,19 +424,6 @@ function inTriggerOrder(cars) {
   return cars.slice().reverse();
 }
 
-// The trigger phase's firing order: whichever side has priority this round
-// (see sidePriority) fires its ENTIRE train, in position order (engine end
-// first), before the other side's train starts at all. Within one side,
-// order is purely by position - e.g. engine -> artillery -> heal fires
-// artillery, then heal, regardless of which is "newer".
-function fullTriggerOrder(state) {
-  const ranked = [];
-  for (const side of sidePriority(state)) {
-    for (const car of inTriggerOrder(state[side].cars)) ranked.push({ side, car });
-  }
-  return ranked;
-}
-
 // A living, coupled car is a candidate for a random hit - a junked car (0
 // HP) is never picked, so no shot is ever wasted on something already
 // destroyed. The Engine is the last thing standing: it's only a valid hit
@@ -552,28 +551,36 @@ function applyHit(state, targetSide, amount, log, sourceLabel, events, kind, att
   });
 }
 
-// Every coupled, non-disabled, non-junked car triggers its own effect (heal
-// or damage) in fullTriggerOrder - purely by train position, never grouped
-// by side. Returns { log, events } - events is the ordered hit-by-hit trace
-// described in applyHit, above, plus heal entries (kind: 'heal') shaped so
-// the UI can replay them the same way.
-export function resolveTrigger(state, plays) {
+// Once the build phase is over (see BUILD_ROUNDS/gamePhase), nobody plays
+// anything new any more - each round is just whichever side has priority
+// this round (see sidePriority; the same odd/even alternation build rounds
+// already used) firing its ENTIRE train, in position order (engine end
+// first), then passing to the other side next round. Returns
+// { log, events, turns, side } - events is the ordered hit-by-hit trace
+// described in applyHit, above, plus heal/revive entries shaped so the UI
+// can replay them the same way; turns is one entry per car in this side's
+// train (junked cars included) so the UI can pulse every one of them in
+// order, not just the ones that landed a visible hit - eventStart/eventEnd
+// slice into `events` for whatever that specific car's own turn produced
+// (empty range for a junked or no-op turn).
+export function resolveCombatTurn(state) {
+  const side = sidePriority(state)[0];
+  const target = otherSide(side);
   const log = [];
   const events = [];
-  // One entry per car in fullTriggerOrder (junked cars included) - the UI
-  // uses this to pulse every car in turn order, even one that's junked or
-  // does nothing this round, so the whole trigger phase reads as a
-  // sequence instead of only the cars that happened to land a visible hit.
-  // eventStart/eventEnd slice into `events` for whatever this specific
-  // car's own turn produced (empty range for a junked or no-op turn).
-  // Sudden death's events, appended after this loop, aren't tied to any
-  // one car's turn and so aren't covered by any range here.
   const turns = [];
 
-  for (const { side, car } of fullTriggerOrder(state)) {
-    const target = otherSide(side);
+  // A shield this side's own Armor granted last time protects all the way
+  // through the enemy's turn in between, and clears here - right before
+  // this side's own Armor might roll a fresh one this turn - rather than at
+  // the end of this side's last turn, so it stayed visible on screen for
+  // the whole time it actually applied.
+  state[side].engine.shieldedThisRound = false;
+  for (const car of state[side].cars) car.shieldedThisRound = false;
+
+  for (const car of inTriggerOrder(state[side].cars)) {
     if (car.hp <= 0) {
-      turns.push({ side, carId: car.id, junk: true, eventStart: events.length, eventEnd: events.length });
+      turns.push({ carId: car.id, junk: true, eventStart: events.length, eventEnd: events.length });
       continue;
     }
     const eventStart = events.length;
@@ -675,31 +682,29 @@ export function resolveTrigger(state, plays) {
         log.push(`${side}'s saboteur sabotages ${target}'s ${victim.type}`);
       }
     }
-    turns.push({ side, carId: car.id, junk: false, eventStart, eventEnd: events.length });
+    turns.push({ carId: car.id, junk: false, eventStart, eventEnd: events.length });
   }
 
-  // Sudden death: escalating chip damage once round 9+ is reached, after
-  // every car's own trigger - not tied to any one car's turn, so it's not
-  // covered by any range in `turns` above.
-  if (state.round >= SUDDEN_DEATH_START_ROUND) {
-    const chip = state.round - (SUDDEN_DEATH_START_ROUND - 1);
-    for (const s of sidePriority(state)) applyHit(state, s, chip, log, 'sudden death', events, 'suddendeath', null, null);
-  }
+  // Sabotage received reduces exactly this one turn's output, then clears -
+  // it doesn't linger into this side's next turn unless sabotaged again.
+  for (const car of state[side].cars) car.disabledThisRound = 0;
 
-  // This round's passive Armor shields are left in place here so they're
-  // still visible on screen through the rest of this round's rendering -
-  // resolveSetup clears them at the top of the NEXT round, right before
-  // that round's Armor Cars roll fresh ones.
-  state.round += 1;
-  return { log, events, turns };
+  return { log, events, turns, side };
 }
 
-// Convenience: run both stages back to back, for tests/simulations that
-// don't care about the animated staging the UI does between them.
+// Convenience: run whichever this round actually is - a build round
+// (resolveSetup, using `plays`) or a combat turn (resolveCombatTurn, which
+// needs no plays at all) - and advance state.round, for tests/simulations
+// that don't care about the animated staging the UI does around either one.
 export function resolveRound(state, plays) {
-  const setup = resolveSetup(state, plays);
-  const trigger = resolveTrigger(state, plays);
-  state.log = [...setup.log, ...trigger.log];
+  if (gamePhase(state) === 'build') {
+    const setup = resolveSetup(state, plays);
+    state.log = [...(state.log || []), ...setup.log];
+  } else {
+    const turn = resolveCombatTurn(state);
+    state.log = [...(state.log || []), ...turn.log];
+  }
+  state.round += 1;
   return state;
 }
 

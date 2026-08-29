@@ -1,5 +1,5 @@
 import { PeerNetwork, formatRoomCode, toPeerId } from './network.js';
-import { CARDS, UPGRADABLE_TYPES, createDeck, draw, redrawHand, ensurePlayable, ensureNoDuplicateMedic, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveTrigger, validTargets, checkWinner, reorderCar } from './game.js';
+import { CARDS, UPGRADABLE_TYPES, createDeck, draw, redrawHand, ensurePlayable, ensureNoDuplicateMedic, ensureWeapon, deriveSeed, createMatchState, computeHp, resolveSetup, resolveCombatTurn, gamePhase, BUILD_ROUNDS, validTargets, checkWinner, reorderCar } from './game.js';
 import { chooseBotPlay } from './bot.js';
 
 const menuOverlay = document.getElementById('menu-overlay');
@@ -35,6 +35,7 @@ const oppHpEl = document.getElementById('opp-hp');
 const oppHpFillEl = document.getElementById('opp-hp-fill');
 const oppTrainEl = document.getElementById('opp-train');
 const oppTrackEl = document.getElementById('opp-track');
+const handBarEl = document.getElementById('hand-bar');
 const handEl = document.getElementById('hand');
 const btnPass = document.getElementById('btn-pass');
 const targetAreaEl = document.getElementById('target-area');
@@ -58,13 +59,14 @@ let matchMode = 'autoMode'; // 'autoMode' | 'inviteMode' - which panel is showin
 let autoMatchGeneration = 0; // bumped to invalidate an in-flight autoMode search (cancel, or switching modes)
 
 const BOT_DELAY_MS = 700; // how long the bot "thinks" before committing
-const STAGE_MS = 550; // gap between setup and the trigger phase in the resolution animation
+const STAGE_MS = 550; // gap between a build round's coupling and its "Round N" banner, and between a combat turn's announcement and its pulses starting
 const BANNER_MS = 1300; // how long the "Round N" banner stays up
+const COMBAT_TURN_GAP_MS = 900; // pause after one side's combat turn finishes before the next one starts
 const PROJECTILE_MS = 950; // wagon projectile travel time
 const SNIPER_PROJECTILE_MS = 550; // sniper shot: smaller and faster than a wagon shell
-const EVENT_PAUSE_MS = 300; // non-projectile damage events (sudden death)
+const EVENT_PAUSE_MS = 300; // non-projectile damage events
 const EVENT_GAP_MS = 150; // breather between damage events once one has landed
-const MIN_TRIGGER_TURN_MS = 750; // every car's own turn in the trigger phase - even a junked or no-op one - stays on screen at least this long
+const MIN_TRIGGER_TURN_MS = 750; // every car's own turn in a combat turn - even a junked or no-op one - stays on screen at least this long
 const WRECK_LINE_MS = 380; // Wrecking Car's grapple line reaching the target
 const WRECK_PULL_MS = 900; // pull + derail + freeze + fade, one combined animation
 const SHIELD_PULSE_MS = 260; // a shield icon pulses once it absorbs a hit...
@@ -109,7 +111,7 @@ let stagedPlay = null; // { cardId, target, insertIndex } - what End Turn submit
 // to cover whatever's left too (the kept card from a play, or the whole
 // hand on a pass - nothing carries over to next round any more). Outlives
 // stagedPlay/myPlay (which both go back to null well before the round
-// actually resolves) all the way through to finishRound, which is what
+// actually resolves) all the way through to finishBuildRound, which is what
 // actually draws the replacements. renderHand uses this the whole time to
 // redraw each vacated slot as an invisible same-sized placeholder rather
 // than letting anything resize/reflow into it.
@@ -119,6 +121,7 @@ let phantomWrecks = []; // [{ side, car, index }] - cars still shown mid wreck-a
 let myLastTrainWidth = null;
 let oppLastTrainWidth = null;
 let inTriggerPhase = false;
+let combatActiveSide = null; // 'host' | 'client' | null - whichever side's combat turn is currently resolving/animating (see runCombatLoop); meaningless during the build phase
 let pulsingIds = new Set(); // car ids to pulse on the next render, then cleared
 let pulsingEngineSides = new Set(); // side keys ('host'/'client') whose engine box should pulse on the next render, then cleared
 // { carHp: Map<carId, hp>, engineHp: { host, client } } during a trigger-phase
@@ -235,6 +238,7 @@ function startMatch(seed) {
   myLastTrainWidth = null;
   oppLastTrainWidth = null;
   inTriggerPhase = false;
+  combatActiveSide = null;
   pulsingIds = new Set();
   pulsingEngineSides = new Set();
   hpRevealOverride = null;
@@ -251,7 +255,13 @@ function startMatch(seed) {
 }
 
 function render() {
-  roundInfoEl.textContent = inTriggerPhase ? 'Trigger Phase' : `Round ${matchState.round}`;
+  if (gamePhase(matchState) === 'combat') {
+    roundInfoEl.textContent = inTriggerPhase
+      ? (combatActiveSide === myRole ? 'Your Train Fires' : "Opponent's Train Fires")
+      : 'Combat';
+  } else {
+    roundInfoEl.textContent = `Round ${matchState.round} / ${BUILD_ROUNDS}`;
+  }
   const myTotal = computeHp(matchState, myRole);
   const oppTotal = computeHp(matchState, oppRole);
   renderHp(myHpEl, myHpFillEl, myTotal.hp, myTotal.maxHp);
@@ -524,9 +534,9 @@ function renderTrain(el, cars, validIds, flagPreview, engineInfo, isMine) {
     const rawShieldRolls = previewingThisUpgrade && upgradePreview.shieldRolls != null ? upgradePreview.shieldRolls : car.shieldRolls;
     const rawHealPerRound = previewingThisUpgrade && upgradePreview.healPerRound != null ? upgradePreview.healPerRound : car.healPerRound;
     const maxHp = previewingThisUpgrade ? upgradePreview.maxHp : car.maxHp;
-    // Sabotage knocks a level off whatever the car would otherwise do this
-    // round (see resolveTrigger) - reflect that same reduction here so the
-    // stat line shown never overstates what's actually about to happen.
+    // Sabotage knocks a level off whatever the car would otherwise do on its
+    // next turn (see resolveCombatTurn) - reflect that same reduction here
+    // so the stat line shown never overstates what's actually about to happen.
     const sabotage = car.disabledThisRound || 0;
     const dmgPerRound = Math.max(0, (rawDmgPerRound ?? 0) - sabotage);
     const shieldRolls = Math.max(0, (rawShieldRolls ?? 0) - sabotage);
@@ -663,7 +673,7 @@ function renderHand() {
   // Whatever's still in myHand (nothing, once End Turn has been pressed -
   // see endTurn) pads out with a trailing placeholder per vacated slot.
   // That's what makes a new arrival always show up to the right of
-  // whatever's still mid-staging, once finishRound draws it.
+  // whatever's still mid-staging, once finishBuildRound draws it.
   const slots = myHand.slice(0, HAND_SIZE);
   while (slots.length < HAND_SIZE) slots.push(null);
 
@@ -921,7 +931,7 @@ function onCardDragEnd(e) {
 // new. Applied instantly and sent to the opponent so both peers' copies of
 // my train stay in the same order (see the 'reorder' network message) -
 // pure reordering by id needs no RNG or hidden info, so there's nothing to
-// run through resolveSetup/resolveTrigger for this.
+// run through resolveSetup/resolveCombatTurn for this.
 function startCarReorderDrag(e, car, boxEl) {
   if (reorderDragState) return;
   e.preventDefault();
@@ -1185,7 +1195,7 @@ function abortInProgressInteractions() {
 // (non-placeholder) card when End Turn is pressed slides out to the left:
 // the whole hand on a pass, or just the kept card when a play already sent
 // the other one into a placeholder back in stagePlay. Either way the actual
-// redraw is deferred to finishRound, once the round resolves.
+// redraw is deferred to finishBuildRound, once the round resolves.
 function playHandExitAnimation() {
   const cards = Array.from(handEl.children).filter((el) => !el.classList.contains('placeholder'));
   if (!cards.length) return Promise.resolve();
@@ -1217,10 +1227,10 @@ async function endTurn() {
   // Whatever just visibly exited above (the kept card from a play, or the
   // whole hand on a pass) - track its type too, alongside whatever a play
   // already vacated in stagePlay, so every now-empty slot still shows the
-  // right same-sized placeholder until finishRound draws its replacement.
+  // right same-sized placeholder until finishBuildRound draws its replacement.
   vacatedCardIds = vacatedCardIds.concat(myHand);
   myHand = [];
-  // The whole hand's about to be freshly redrawn (see finishRound) - make
+  // The whole hand's about to be freshly redrawn (see finishBuildRound) - make
   // sure that render treats every card in it as a genuinely new arrival
   // (slides in), even if the shuffle happens to redraw the same card type
   // into the same slot.
@@ -1333,10 +1343,11 @@ function revealOppPendingIfReady() {
   }
 }
 
-// Runs once both plays are known: setup, then the trigger phase (one whole
-// train's cars, in order, before the other's), each applied and rendered in
-// turn with a short pause so the player can follow what happened, then a
-// "Round N" banner before the next round unlocks.
+// Runs once both plays are known, during the build phase: cards couple on
+// (or upgrade/sabotage), rendered with a short pause so the player can
+// follow what happened, then a "Round N" banner before the next build round
+// unlocks - or, once BUILD_ROUNDS is reached, combat takes over instead
+// (see startCombatPhase/runCombatLoop) and nobody plays anything again.
 async function runResolution() {
   if (!myPlay || !oppPlay || gameOver || resolving) return;
   resolving = true;
@@ -1381,35 +1392,8 @@ async function runResolution() {
   }
   await wait(STAGE_MS);
 
-  inTriggerPhase = true;
-  const preTriggerHp = { host: computeHp(matchState, 'host').hp, client: computeHp(matchState, 'client').hp };
-  // Snapshot every car/engine's own HP before the trigger phase mutates it -
-  // renderTrains reads through this until each specific hit/heal "lands", so
-  // a car doesn't look damaged/junked ahead of its own animation.
-  const carHpSnapshot = new Map();
-  for (const side of [myRole, oppRole]) for (const car of matchState[side].cars) carHpSnapshot.set(car.id, car.hp);
-  hpRevealOverride = {
-    carHp: carHpSnapshot,
-    engineHp: { host: matchState.host.engine.hp, client: matchState.client.engine.hp },
-  };
-  const trigger = resolveTrigger(matchState, plays); // fully resolved now; revealed to the player hit by hit below
-  // Same idea as hpRevealOverride: a Shield that gets consumed during this
-  // trigger phase is already broken in matchState by now - keep it drawn as
-  // shielded until the specific event that broke it plays its own animation.
-  const shieldCarIds = new Set();
-  const shieldEngineSides = new Set();
-  for (const ev of trigger.events) {
-    if (!ev.shielded) continue;
-    if (ev.hitKind === 'engine') shieldEngineSides.add(ev.targetSide);
-    else if (ev.hitKind === 'car') shieldCarIds.add(ev.hitCarId);
-  }
-  shieldRevealOverride = { carIds: shieldCarIds, engineSides: shieldEngineSides };
-  await playTriggerEvents(trigger.turns, trigger.events, preTriggerHp);
-  hpRevealOverride = null;
-  shieldRevealOverride = null;
-  inTriggerPhase = false;
   render();
-  finishRound();
+  finishBuildRound();
 }
 
 // Plays every Wrecking Car destroy from this round's setup phase (there can
@@ -1535,17 +1519,16 @@ function fireProjectile(fromEl, toEl, variant, durationMs) {
   });
 }
 
-// Replays a resolved trigger phase turn by turn, one whole train (in
-// position order) completely before the other starts, per resolveTrigger's
-// side-major ordering. Every car gets its own turn shown here - not just
-// the ones that landed a visible hit - so a junked car, or one sabotaged/
-// targetless into doing nothing, still pulses in its place instead of the
-// phase silently jumping past it; that's what makes the sequence itself
-// readable, not just the hits within it. Wagon and sniper shots fire a
-// projectile (sniper's smaller and faster) and only reveal their damage
-// once it lands; heals and other sources just get a short beat. Whatever a
-// turn's own animation adds up to, it's padded to MIN_TRIGGER_TURN_MS
-// before the next car's turn starts.
+// Replays one side's already-resolved combat turn car by car, in position
+// order (engine end first - see resolveCombatTurn), called once per turn by
+// runCombatLoop. Every car gets its own turn shown here - not just the ones
+// that landed a visible hit - so a junked car, or one sabotaged/targetless
+// into doing nothing, still pulses in its place instead of the sequence
+// silently jumping past it. Wagon and sniper shots fire a projectile
+// (sniper's smaller and faster) and only reveal their damage once it lands;
+// heals and other sources just get a short beat. Whatever a turn's own
+// animation adds up to, it's padded to MIN_TRIGGER_TURN_MS before the next
+// car's turn starts.
 // `displayedHp` starts at each side's HP from before this stage (matchState
 // itself is already fully resolved to the *end* of the stage by the time
 // this runs) and is only advanced to an event's hpAfter once that event has
@@ -1623,7 +1606,13 @@ async function playShieldBreak(side, hitKind, hitCarId) {
   await wait(SHIELD_BREAK_MS);
 }
 
-function finishRound() {
+// A build round never deals any damage (resolveSetup only couples/upgrades/
+// sabotages), so checkWinner can never actually trigger here - nothing to
+// check for. resolveSetup doesn't advance state.round itself (unlike a
+// combat turn), so this is what does it.
+function finishBuildRound() {
+  matchState.round += 1;
+
   // Nothing carries over between rounds any more - whatever wasn't played
   // already exited back in endTurn (myHand is empty by now), so the whole
   // hand redraws fresh here rather than just refilling the played slot.
@@ -1637,20 +1626,6 @@ function finishRound() {
     botHand = ensurePlayable(matchState, oppRole, botDeck, botHand);
   }
 
-  const winner = checkWinner(matchState);
-  if (winner) {
-    gameOver = true;
-    resolving = false;
-    myPlay = null;
-    oppPlay = null;
-    setupResolved = false;
-    myResolvedClawId = null;
-    oppResolvedClawId = null;
-    render();
-    showGameOver(winner);
-    return;
-  }
-
   showRoundBanner(matchState.round);
   setTimeout(() => {
     resolving = false;
@@ -1660,8 +1635,77 @@ function finishRound() {
     myResolvedClawId = null;
     oppResolvedClawId = null;
     render();
-    startTurnTimer();
+    if (gamePhase(matchState) === 'combat') startCombatPhase();
+    else startTurnTimer();
   }, BANNER_MS);
+}
+
+// The build phase is over - nobody plays anything again. Hides the hand bar
+// and End Turn button (there's nothing left to do with them) and kicks off
+// the fully-automatic, alternating combat loop.
+function startCombatPhase() {
+  clearTurnTimer();
+  handBarEl.classList.add('hidden');
+  btnPass.classList.add('hidden');
+  resolving = true;
+  runCombatLoop();
+}
+
+// One whole side's train fires, then - after a beat - the other's, forever
+// alternating (see resolveCombatTurn/sidePriority) until an engine dies.
+// Fully deterministic from here on (no new plays, just the shared battle
+// RNG), so both peers run this locally and independently and stay in
+// lockstep without exchanging a single network message.
+async function runCombatLoop() {
+  if (gameOver) return;
+
+  const preTurnHp = { host: computeHp(matchState, 'host').hp, client: computeHp(matchState, 'client').hp };
+  // Snapshot every car/engine's own HP before this turn mutates it -
+  // renderTrains reads through this until each specific hit/heal "lands", so
+  // a car doesn't look damaged/junked ahead of its own animation.
+  const carHpSnapshot = new Map();
+  for (const s of ['host', 'client']) for (const car of matchState[s].cars) carHpSnapshot.set(car.id, car.hp);
+  hpRevealOverride = {
+    carHp: carHpSnapshot,
+    engineHp: { host: matchState.host.engine.hp, client: matchState.client.engine.hp },
+  };
+
+  const turn = resolveCombatTurn(matchState); // fully resolved now; revealed to the player hit by hit below
+  matchState.round += 1;
+  combatActiveSide = turn.side;
+
+  // Same idea as hpRevealOverride: a Shield that gets consumed during this
+  // turn is already broken in matchState by now - keep it drawn as shielded
+  // until the specific event that broke it plays its own animation.
+  const shieldCarIds = new Set();
+  const shieldEngineSides = new Set();
+  for (const ev of turn.events) {
+    if (!ev.shielded) continue;
+    if (ev.hitKind === 'engine') shieldEngineSides.add(ev.targetSide);
+    else if (ev.hitKind === 'car') shieldCarIds.add(ev.hitCarId);
+  }
+  shieldRevealOverride = { carIds: shieldCarIds, engineSides: shieldEngineSides };
+
+  inTriggerPhase = true;
+  render(); // announces whose turn it is before the pulses start
+  await wait(STAGE_MS);
+  await playTriggerEvents(turn.turns, turn.events, preTurnHp);
+  hpRevealOverride = null;
+  shieldRevealOverride = null;
+  inTriggerPhase = false;
+  render();
+
+  const winner = checkWinner(matchState);
+  if (winner) {
+    gameOver = true;
+    resolving = false;
+    render();
+    showGameOver(winner);
+    return;
+  }
+
+  await wait(COMBAT_TURN_GAP_MS);
+  runCombatLoop();
 }
 
 function showRoundBanner(roundNum) {
